@@ -6,11 +6,16 @@
 <title>Stepo CRM</title>
 <style>
   body { margin:0; background:#000; color:#fff; font-family:system-ui,sans-serif;
-         display:grid; place-items:center; height:100vh; }
-  .lock { text-align:center; }
-  input { font:inherit; padding:10px 14px; border-radius:10px; border:1px solid #2A2A2A;
-          background:#171717; color:#fff; text-align:center; letter-spacing:0.3em; }
-  .err { color:#FF4D4D; height:18px; font-size:12px; margin-top:8px; }
+         display:grid; place-items:center; height:100vh; padding:24px; box-sizing:border-box; }
+  .lock { text-align:center; width:100%; max-width:280px; }
+  form { display:flex; flex-direction:column; gap:12px; }
+  input { font:inherit; padding:14px; border-radius:10px; border:1px solid #2A2A2A;
+          background:#171717; color:#fff; text-align:center; letter-spacing:0.3em; width:100%;
+          box-sizing:border-box; }
+  button { font:inherit; font-weight:700; padding:14px; border-radius:10px; border:none;
+           background:#D4FF3F; color:#000; cursor:pointer; width:100%; -webkit-appearance:none; }
+  button:active { opacity:0.85; }
+  .err { color:#FF4D4D; height:18px; font-size:12px; }
   h1 { font-size:28px; letter-spacing:0.04em; }
   .accent { color:#D4FF3F; }
 </style>
@@ -18,8 +23,11 @@
 <body>
 <div class="lock" id="lock">
   <h1>STEPO<span class="accent">CRM</span></h1>
-  <input id="pass" type="password" inputmode="numeric" autofocus placeholder="passcode">
-  <div class="err" id="err"></div>
+  <form id="gate" autocomplete="off">
+    <input id="pass" type="password" inputmode="numeric" autocomplete="off" autofocus placeholder="passcode">
+    <button type="submit">Unlock</button>
+    <div class="err" id="err"></div>
+  </form>
 </div>
 <script>
 const HASH = "ced6f3c05e1dfefa8455fa60aacdd2d76ffd79489b631c2dbde22a74e927544b";
@@ -41,14 +49,21 @@ function unlock() {
 if (sessionStorage.getItem('stepoCrm.unlocked') === '1') {
   unlock();
 } else {
-  document.getElementById('pass').addEventListener('keydown', async e => {
-    if (e.key !== 'Enter') return;
-    if (await sha256(e.target.value) === HASH) {
+  const pass = document.getElementById('pass');
+  const err = document.getElementById('err');
+  // Submit via the form, not a keydown listener: this fires for the button tap,
+  // a desktop Enter press, AND a mobile keyboard's Go/Return. The old
+  // Enter-keydown-only path could not be triggered on a mobile numeric keypad,
+  // which has no Enter key — so the passcode could never be entered on a phone.
+  document.getElementById('gate').addEventListener('submit', async e => {
+    e.preventDefault();
+    if (await sha256(pass.value) === HASH) {
       sessionStorage.setItem('stepoCrm.unlocked', '1');
       unlock();
     } else {
-      document.getElementById('err').textContent = 'Nope.';
-      e.target.value = '';
+      err.textContent = 'Nope.';
+      pass.value = '';
+      pass.focus();
     }
   });
 }
