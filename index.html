@@ -300,6 +300,7 @@ textarea { min-height: 80px; resize: vertical; }
       <a href="#/learnings" data-route="learnings">Learnings</a>
     </nav>
     <div class="topbar-right">
+      <button id="braindump-btn" class="btn btn-ghost" title="Brain dump">🧠 Dump</button>
       <button id="quick-add-btn" class="btn btn-accent">+ Log</button>
       <button id="search-btn" class="btn btn-ghost" title="Ctrl-K">Search</button>
       <div id="sync-status" class="sync-status"></div>
@@ -368,6 +369,9 @@ const LEARNING_THEMES = [
   { id: 'differentiation',  label: 'Differentiated service to retain clients' },
   { id: 'underwriter_risk', label: 'Risk services that speak to the underwriter' },
   { id: 'inspection_docs',  label: 'Inspection documentation & corrective actions' },
+  { id: 'liability',        label: 'Liability protection' },
+  { id: 'cya',              label: 'Cover your ass / documentation' },
+  { id: 'look_good',        label: 'Look good for the boss' },
   { id: 'adoption',         label: 'Adoption & ease of use' },
   { id: 'other',            label: 'Other' },
 ];
@@ -381,7 +385,8 @@ function learningThemeById(id) {
    from the same palette. All chosen to read on the dark background. */
 const THEME_COLORS = {
   report_time: '#5B9DFF', differentiation: '#D4FF3F', underwriter_risk: '#FFB020',
-  inspection_docs: '#3FE0C5', adoption: '#B388FF', other: '#9A9A9A',
+  inspection_docs: '#3FE0C5', liability: '#FF6FB5', cya: '#FF8A5B',
+  look_good: '#F5D547', adoption: '#B388FF', other: '#9A9A9A',
 };
 const THEME_PALETTE = ['#5B9DFF', '#FFB020', '#3FE0C5', '#B388FF', '#FF6FB5', '#7FE07F', '#FF8A5B', '#F5D547'];
 function learningThemeColor(id) {
@@ -685,6 +690,13 @@ function sendMagicLink(email) {
   });
 }
 function signOutUser() { return supa.auth.signOut(); }
+
+/* Call a Supabase Edge Function with the signed-in user's session attached. */
+async function invokeFunction(name, body) {
+  const { data, error } = await supa.functions.invoke(name, { body });
+  if (error) throw error;
+  return data;
+}
 function onAuthChange(cb) { return supa.auth.onAuthStateChange((_evt, session) => cb(session)); }
 async function getActiveSession() { const { data } = await supa.auth.getSession(); return data.session || null; }
 
@@ -2050,6 +2062,178 @@ function mountSearch(ctx) {
 }
 
 
+/* ===== js/views/braindump.js ===== */
+
+let brainDumpKeyHandler = null;
+
+function closeBrainDump() {
+  if (brainDumpKeyHandler) {
+    window.removeEventListener('keydown', brainDumpKeyHandler);
+    brainDumpKeyHandler = null;
+  }
+  clear(document.getElementById('overlay-root'));
+}
+registerOverlayCloser(closeBrainDump);
+
+// A compact picture of the CRM so Claude can match names and use valid values.
+function buildSnapshot(ctx) {
+  const acctName = new Map(ctx.store.list('accounts').map(a => [a.id, a.name]));
+  return {
+    accounts: ctx.store.list('accounts').map(a => a.name),
+    deals: ctx.store.list('deals').map(d =>
+      `${d.name} — ${acctName.get(d.accountId) || '?'} — ${d.track || 'pipeline'}/${d.stage}`),
+    pipelineStages: STAGE_IDS,
+    pilotStages: PILOT_STAGE_IDS,
+    themes: LEARNING_THEME_IDS,
+  };
+}
+
+function findAccount(ctx, name) {
+  if (!name) return null;
+  const n = name.trim().toLowerCase();
+  return ctx.store.list('accounts').find(a => a.name.toLowerCase() === n) || null;
+}
+
+function findDeal(ctx, op) {
+  const deals = ctx.store.list('deals');
+  if (op.deal) {
+    const n = op.deal.trim().toLowerCase();
+    const exact = deals.find(d => d.name.toLowerCase() === n);
+    if (exact) return exact;
+  }
+  const account = findAccount(ctx, op.account);
+  if (account) return deals.find(d => d.accountId === account.id) || null;
+  return null;
+}
+
+function describe(op) {
+  switch (op.op) {
+    case 'move_deal': return `Move "${op.deal || op.account}" → ${[op.track, op.stage].filter(Boolean).join(' / ') || '(no change)'}`;
+    case 'set_next_action': return `Next action on "${op.deal || op.account}": ${op.text}${op.dueDate ? ` (due ${op.dueDate})` : ''}`;
+    case 'add_learning': { const t = learningThemeById(op.theme); return `💡 Learning on ${op.account} [${t ? t.label : op.theme || 'other'}]: ${op.text}`; }
+    case 'create_account': return `Create account "${op.name}"${op.accountType ? ` (${op.accountType})` : ''}`;
+    case 'add_contact': return `Add contact ${op.name}${op.title ? `, ${op.title}` : ''} to ${op.account}`;
+    default: return `Note: ${op.message || op.text || ''}`;
+  }
+}
+
+function applyOp(ctx, op) {
+  switch (op.op) {
+    case 'move_deal': {
+      const deal = findDeal(ctx, op);
+      if (!deal) return;
+      const changes = {};
+      if (op.track) changes.track = op.track;
+      if (op.stage) changes.stage = op.stage;
+      if (Object.keys(changes).length) ctx.store.update('deals', deal.id, changes);
+      return;
+    }
+    case 'set_next_action': {
+      const deal = findDeal(ctx, op);
+      if (deal && op.text) ctx.store.update('deals', deal.id, { nextAction: { text: op.text, dueDate: op.dueDate || todayStr() } });
+      return;
+    }
+    case 'add_learning': {
+      const account = findAccount(ctx, op.account);
+      if (account && op.text) ctx.store.add('learnings', { accountId: account.id, theme: op.theme || 'other', text: op.text });
+      return;
+    }
+    case 'create_account': {
+      if (op.name) ctx.store.add('accounts', { name: op.name, type: op.accountType || 'other' });
+      return;
+    }
+    case 'add_contact': {
+      const account = findAccount(ctx, op.account);
+      if (account && op.name) ctx.store.add('contacts', { accountId: account.id, name: op.name, title: op.title || '', email: op.email || '' });
+      return;
+    }
+    default: return; // note — nothing to apply
+  }
+}
+
+function openBrainDump(ctx) {
+  const root = document.getElementById('overlay-root');
+  closeAllOverlays();
+
+  const textarea = el('textarea', {
+    placeholder: 'Dump your day… e.g. "Moved Grande to evaluation. PMA wants faster reports to keep Yale. Add a new account for the electrician I met Tuesday. Warhawk learned they need inspection sign-off."',
+    style: 'min-height:160px',
+  });
+  const status = el('div', { class: 'signin-msg' });
+  const body = el('div', {});
+
+  function showInput() {
+    body.replaceChildren(
+      el('label', { text: 'Brain dump' }), textarea, status,
+      el('div', { class: 'actions' }, [
+        el('button', { class: 'btn btn-accent', text: 'Process', onClick: process }),
+        el('button', { class: 'btn btn-ghost', text: 'Cancel', onClick: closeBrainDump }),
+      ]),
+    );
+    textarea.focus();
+  }
+
+  async function process() {
+    const text = textarea.value.trim();
+    if (!text) return;
+    status.className = 'signin-msg';
+    status.textContent = 'Thinking…';
+    try {
+      const result = await invokeFunction('braindump', { text, snapshot: buildSnapshot(ctx) });
+      showPreview(result);
+    } catch (e) {
+      status.className = 'signin-msg err';
+      status.textContent = 'Brain-dump backend isn’t set up yet (needs the Anthropic key + the braindump function deployed).';
+    }
+  }
+
+  function showPreview(result) {
+    const ops = (result && result.operations) || [];
+    const checks = ops.map(op => {
+      const cb = el('input', { type: 'checkbox', class: 'sel' });
+      cb.checked = true;
+      return { cb, op };
+    });
+    body.replaceChildren(
+      el('div', { class: 'muted', text: result.summary || 'Proposed changes:' }),
+      ops.length
+        ? el('div', { style: 'margin:10px 0' }, checks.map(({ cb, op }) =>
+            el('label', { class: 'row', style: 'cursor:pointer' }, [cb, el('span', { class: 'grow', text: describe(op) })])))
+        : el('div', { class: 'empty', text: 'Nothing actionable found.' }),
+      el('div', { class: 'actions' }, [
+        el('button', {
+          class: 'btn btn-accent', text: `Apply ${checks.filter(c => c.cb.checked).length || ''}`.trim(),
+          onClick: () => { checks.filter(c => c.cb.checked).forEach(c => applyOp(ctx, c.op)); closeBrainDump(); },
+        }),
+        el('button', { class: 'btn btn-ghost', text: 'Back', onClick: showInput }),
+      ]),
+    );
+  }
+
+  showInput();
+  const modal = el('div', { class: 'modal' }, [
+    el('div', { class: 'section-head' }, [
+      el('h2', { text: '🧠 Brain dump' }),
+      el('button', { class: 'btn btn-ghost', text: 'Close', style: 'margin-left:auto', onClick: closeBrainDump }),
+    ]),
+    body,
+  ]);
+  root.append(el('div', { class: 'scrim', onClick: closeBrainDump }), modal);
+
+  brainDumpKeyHandler = e => {
+    if (e.key === 'Escape') closeBrainDump();
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) process();
+  };
+  window.addEventListener('keydown', brainDumpKeyHandler);
+}
+
+function mountBrainDump(ctx) {
+  const btn = document.getElementById('braindump-btn');
+  if (btn) btn.addEventListener('click', () => openBrainDump(ctx));
+  window.addEventListener('crm:braindump', () => openBrainDump(ctx));
+}
+
+
 /* ===== js/app.js ===== */
 
 const ROUTES = {
@@ -2104,7 +2288,7 @@ function boot() {
       currentUid = session.user.id;
       await store.load();
     }
-    if (!mounted) { mountQuickAdd(ctx); mountSearch(ctx); mounted = true; }
+    if (!mounted) { mountQuickAdd(ctx); mountSearch(ctx); mountBrainDump(ctx); mounted = true; }
     render();
   }
 
