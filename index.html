@@ -2179,7 +2179,7 @@ function openBrainDump(ctx) {
     status.className = 'signin-msg';
     status.textContent = 'Thinking…';
     try {
-      const result = await invokeFunction('hyper-service', { text, snapshot: buildSnapshot(ctx) });
+      const result = await invokeFunction('braindump', { text, snapshot: buildSnapshot(ctx) });
       showPreview(result);
     } catch (e) {
       status.className = 'signin-msg err';
