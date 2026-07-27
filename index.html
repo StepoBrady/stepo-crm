@@ -110,6 +110,15 @@ main[data-route="today"] {
 main[data-route="today"] > h1 { grid-column: 1 / -1; margin-bottom: -6px; }
 main[data-route="today"] > .section { margin-bottom: 0; }
 
+/* Learnings tab tiles the theme sections across the width, like Today. */
+main[data-route="learnings"] {
+  display: grid; align-items: start; gap: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
+}
+main[data-route="learnings"] > h1,
+main[data-route="learnings"] > .muted { grid-column: 1 / -1; margin-bottom: 0; }
+main[data-route="learnings"] > .section { margin-bottom: 0; }
+
 /* Account detail: management (deals + contacts) on the left, activity stream
    on the right. Stacks below 900px. */
 .detail-cols {
@@ -156,6 +165,10 @@ main[data-route="today"] > .section { margin-bottom: 0; }
 .chip.cold { background: var(--warn); color: var(--bg); }
 .chip.calendar { background: transparent; color: var(--ink-dim); border: 1px solid var(--line); }
 .chip.owe { background: var(--danger); color: #fff; }
+.chip.theme { background: var(--surface-2); color: var(--accent); border: 1px solid var(--line); white-space: normal; }
+.learning-text { font-size: 13px; margin-top: 2px; }
+.learnings-reminder { margin-bottom: 16px; border-left: 3px solid var(--accent); }
+.learnings-reminder .learning-text { color: var(--ink); margin-top: 4px; }
 .notes { margin-top: 4px; }
 .notes summary { cursor: pointer; color: var(--accent); font-size: 12px; }
 .notes-body { white-space: pre-wrap; color: var(--ink-dim); font-size: 13px; margin-top: 6px;
@@ -244,6 +257,7 @@ textarea { min-height: 80px; resize: vertical; }
 /* Collapse the desktop multi-column layouts before they'd overflow a phone. */
 @media (max-width: 900px) {
   main[data-route="today"] { grid-template-columns: 1fr; }
+  main[data-route="learnings"] { grid-template-columns: 1fr; }
   .detail-cols { grid-template-columns: 1fr; }
   .detail-cols .section:last-child { margin-bottom: 28px; }
 }
@@ -269,6 +283,7 @@ textarea { min-height: 80px; resize: vertical; }
       <a href="#/pipeline" data-route="pipeline">Pipeline</a>
       <a href="#/pilot" data-route="pilot">Pilot</a>
       <a href="#/accounts" data-route="accounts">Accounts</a>
+      <a href="#/learnings" data-route="learnings">Learnings</a>
     </nav>
     <div class="topbar-right">
       <button id="quick-add-btn" class="btn btn-accent">+ Log</button>
@@ -331,6 +346,22 @@ function pilotStageById(id) {
 const ACCOUNT_TYPES = ['carrier', 'broker', 'contractor', 'other'];
 const INTERACTION_TYPES = ['call', 'meeting', 'email', 'sent', 'note'];
 
+/* Learning themes double as the "overarching learnings" shown at the top of the
+   Learnings tab; each per-account learning is tagged with one so specifics roll
+   up under the theme. The first three are the insurance-industry themes. */
+const LEARNING_THEMES = [
+  { id: 'report_time',      label: 'Save report-writing time' },
+  { id: 'differentiation',  label: 'Differentiated service to retain clients' },
+  { id: 'underwriter_risk', label: 'Risk services that speak to the underwriter' },
+  { id: 'inspection_docs',  label: 'Inspection documentation & corrective actions' },
+  { id: 'adoption',         label: 'Adoption & ease of use' },
+  { id: 'other',            label: 'Other' },
+];
+const LEARNING_THEME_IDS = LEARNING_THEMES.map(t => t.id);
+function learningThemeById(id) {
+  return LEARNING_THEMES.find(t => t.id === id);
+}
+
 function newId() {
   if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
     return globalThis.crypto.randomUUID();
@@ -392,6 +423,13 @@ function makeDeal(fields, now) {
     ['accountId', 'primaryContactId', 'name', 'track', 'stage', 'value',
      'probability', 'expectedCloseDate', 'nextAction', 'closedAt', 'closedReason'],
     now,
+  );
+}
+
+function makeLearning(fields, now) {
+  return build(
+    { accountId: null, dealId: null, theme: 'other', text: '' },
+    fields, ['accountId', 'dealId', 'theme', 'text'], now,
   );
 }
 
@@ -601,7 +639,10 @@ const supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
 });
 
-const FACTORIES = { accounts: makeAccount, contacts: makeContact, deals: makeDeal, interactions: makeInteraction };
+const FACTORIES = {
+  accounts: makeAccount, contacts: makeContact, deals: makeDeal,
+  interactions: makeInteraction, learnings: makeLearning,
+};
 const TABLES = Object.keys(FACTORIES);
 
 let sessionUser = null;
@@ -629,7 +670,7 @@ function fromRow(row) { const o = {}; for (const k in row) o[toCamelKey(k)] = ro
 const now = () => new Date().toISOString();
 
 function createRemoteStore() {
-  let doc = { accounts: [], contacts: [], deals: [], interactions: [] };
+  let doc = { accounts: [], contacts: [], deals: [], interactions: [], learnings: [] };
   const listeners = new Set();
   let lastError = null;
 
@@ -888,6 +929,7 @@ function openDealDrawer(ctx, dealId) {
       })));
 
   const account = ctx.store.get('accounts', deal.accountId);
+  const learnings = ctx.store.list('learnings').filter(l => l.accountId === deal.accountId);
   const drawer = el('div', { class: 'drawer' }, [
     el('div', { class: 'section-head' }, [
       el('h2', { text: deal.name }),
@@ -896,6 +938,13 @@ function openDealDrawer(ctx, dealId) {
     account
       ? el('div', { class: 'muted' }, [
           el('a', { href: `#/account/${account.id}`, text: account.name, onClick: closeDealDrawer }),
+        ])
+      : null,
+
+    learnings.length
+      ? el('div', { class: 'card learnings-reminder' }, [
+          el('div', { class: 'muted', text: '💡 Remember before this meeting' }),
+          ...learnings.map(l => el('div', { class: 'learning-text', text: '• ' + l.text })),
         ])
       : null,
 
@@ -1008,6 +1057,7 @@ function stopDragScroll() {
 function dealCard(ctx, deal, today) {
   const account = ctx.store.get('accounts', deal.accountId);
   const contact = deal.primaryContactId ? ctx.store.get('contacts', deal.primaryContactId) : null;
+  const hasLearning = ctx.store.list('learnings').some(l => l.accountId === deal.accountId);
   const due = deal.nextAction ? deal.nextAction.dueDate : null;
   const bucket = dueBucket(due, today);
 
@@ -1015,7 +1065,7 @@ function dealCard(ctx, deal, today) {
     class: 'deal-card', draggable: 'true',
     onClick: () => openDealDrawer(ctx, deal.id),
   }, [
-    el('div', { class: 'name', text: deal.name }),
+    el('div', { class: 'name', text: (hasLearning ? '💡 ' : '') + deal.name }),
     contact ? el('div', { class: 'contact', text: '👤 ' + contact.name }) : null,
     el('div', { class: 'acct', text: account ? account.name : 'No account' }),
     el('div', { class: 'val', text: fmtMoney(deal.value) }),
@@ -1163,6 +1213,45 @@ function renderAccounts(root, ctx) {
 
 
 /* ===== js/views/account-detail.js ===== */
+
+function learningBlock(ctx, account) {
+  const learnings = ctx.store.list('learnings').filter(l => l.accountId === account.id);
+  const theme = el('select', {}, LEARNING_THEMES.map(t => el('option', { value: t.id, text: t.label })));
+  const text = el('input', { placeholder: 'What did we learn from them?' });
+
+  return el('section', { class: 'section' }, [
+    el('div', { class: 'section-head' }, [
+      el('h2', { text: '💡 Learnings' }),
+      el('span', { class: 'count', text: String(learnings.length) }),
+    ]),
+    ...(learnings.length
+      ? learnings.map(l => {
+          const th = learningThemeById(l.theme);
+          return el('div', { class: 'row' }, [
+            el('div', { class: 'grow' }, [
+              el('span', { class: 'chip theme', text: th ? th.label : l.theme }),
+              el('div', { class: 'learning-text', text: l.text }),
+            ]),
+            el('button', {
+              class: 'btn btn-ghost btn-danger', text: 'Remove',
+              onClick: () => ctx.store.remove('learnings', l.id),
+            }),
+          ]);
+        })
+      : [el('div', { class: 'empty', text: 'No learnings yet.' })]),
+    el('div', { class: 'field-row', style: 'margin-top:8px' }, [
+      theme, text,
+      el('button', {
+        class: 'btn', text: 'Add',
+        onClick: () => {
+          if (!text.value.trim()) return;
+          ctx.store.add('learnings', { accountId: account.id, theme: theme.value, text: text.value.trim() });
+          text.value = '';
+        },
+      }),
+    ]),
+  ]);
+}
 
 function contactBlock(ctx, account) {
   const contacts = ctx.store.list('contacts').filter(c => c.accountId === account.id);
@@ -1332,11 +1421,23 @@ function renderAccountDetail(root, ctx, accountId) {
           detail: { accountId: account.id, dealId: null },
         })),
       }),
+      el('button', {
+        class: 'btn btn-ghost btn-danger', text: 'Delete',
+        onClick: () => {
+          if (!confirm(`Delete "${account.name}" and its contacts, deals, and history? This can't be undone.`)) return;
+          // Cascade: remove the account's children first, then the account.
+          for (const c of ctx.store.list('contacts').filter(x => x.accountId === account.id)) ctx.store.remove('contacts', c.id);
+          for (const dl of ctx.store.list('deals').filter(x => x.accountId === account.id)) ctx.store.remove('deals', dl.id);
+          for (const i of ctx.store.list('interactions').filter(x => x.accountId === account.id)) ctx.store.remove('interactions', i.id);
+          ctx.store.remove('accounts', account.id);
+          ctx.route('accounts');
+        },
+      }),
     ]),
     editor,
     ...notesBlock,
     el('div', { class: 'detail-cols' }, [
-      el('div', {}, [dealBlock(ctx, account), contactBlock(ctx, account)]),
+      el('div', {}, [dealBlock(ctx, account), learningBlock(ctx, account), contactBlock(ctx, account)]),
       el('div', {}, [timelineBlock(ctx, account)]),
     ]),
   );
@@ -1593,6 +1694,43 @@ function renderPilot(root, ctx) {
 }
 
 
+/* ===== js/views/learnings.js ===== */
+
+/* The Learnings tab: the themes are the overarching learnings; each account's
+   specific learnings roll up under the theme it's tagged with. Click a row to
+   jump to that account. */
+function renderLearnings(root, ctx) {
+  const learnings = ctx.store.list('learnings');
+  const acctName = new Map(ctx.store.list('accounts').map(a => [a.id, a.name]));
+
+  root.append(
+    el('h1', { text: 'Learnings' }),
+    el('div', { class: 'muted', text: `${learnings.length} captured across ${new Set(learnings.map(l => l.accountId)).size} accounts` }),
+  );
+
+  for (const theme of LEARNING_THEMES) {
+    const items = learnings.filter(l => l.theme === theme.id);
+    if (!items.length && theme.id === 'other') continue; // hide an empty "Other"
+    root.append(el('section', { class: 'section' }, [
+      el('div', { class: 'section-head' }, [
+        el('h2', { text: theme.label }),
+        el('span', { class: 'count', text: String(items.length) }),
+      ]),
+      items.length
+        ? el('div', {}, items.map(l => el('div', {
+            class: 'row', onClick: () => ctx.route('account', l.accountId),
+          }, [
+            el('div', { class: 'grow' }, [
+              el('strong', { text: acctName.get(l.accountId) || 'Unknown account' }),
+              el('div', { class: 'learning-text', text: l.text }),
+            ]),
+          ])))
+        : el('div', { class: 'empty', text: 'Nothing captured under this theme yet.' }),
+    ]));
+  }
+}
+
+
 /* ===== js/views/quick-add.js ===== */
 
 /* Names are globally unique across src/js because the bundler flattens
@@ -1825,6 +1963,7 @@ const ROUTES = {
   pilot: renderPilot,
   accounts: renderAccounts,
   account: renderAccountDetail,
+  learnings: renderLearnings,
 };
 
 function boot() {
