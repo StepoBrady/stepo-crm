@@ -131,6 +131,20 @@ main[data-route="learnings"] > .section { margin-bottom: 0; }
 /* Accounts: a card grid rather than one narrow column. */
 .card-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
 .card-grid .row { margin-bottom: 0; height: 100%; }
+.row .sel { width: 18px; height: 18px; flex: 0 0 auto; accent-color: var(--accent); cursor: pointer; }
+
+/* Bulk-select toolbar on the Accounts page. */
+.bulkbar {
+  display: none; align-items: center; gap: 10px; margin-bottom: 10px;
+  padding: 10px 14px; border: 1px solid var(--accent);
+  border-radius: var(--radius); background: var(--surface-2);
+}
+.bulkbar .grow { flex: 1; }
+
+/* Learnings tab: each section carries its theme color via an inline --theme. */
+.learn-head { border-bottom-color: var(--theme); }
+.learn-head h2 { color: var(--theme); }
+.learn-section .learn-row { border-left: 3px solid var(--theme); }
 
 .card {
   background: var(--surface); border: 1px solid var(--line);
@@ -360,6 +374,21 @@ const LEARNING_THEMES = [
 const LEARNING_THEME_IDS = LEARNING_THEMES.map(t => t.id);
 function learningThemeById(id) {
   return LEARNING_THEMES.find(t => t.id === id);
+}
+
+/* A distinct color per theme so the Learnings page reads at a glance. Built-in
+   themes get fixed colors; custom (free-text) themes get a stable hashed color
+   from the same palette. All chosen to read on the dark background. */
+const THEME_COLORS = {
+  report_time: '#5B9DFF', differentiation: '#D4FF3F', underwriter_risk: '#FFB020',
+  inspection_docs: '#3FE0C5', adoption: '#B388FF', other: '#9A9A9A',
+};
+const THEME_PALETTE = ['#5B9DFF', '#FFB020', '#3FE0C5', '#B388FF', '#FF6FB5', '#7FE07F', '#FF8A5B', '#F5D547'];
+function learningThemeColor(id) {
+  if (THEME_COLORS[id]) return THEME_COLORS[id];
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return THEME_PALETTE[h % THEME_PALETTE.length];
 }
 
 function newId() {
@@ -1165,6 +1194,45 @@ function renderAccounts(root, ctx) {
   const deals = ctx.store.list('deals');
   const filter = el('input', { placeholder: 'Filter accounts…' });
   const list = el('div', { class: 'card-grid' });
+  const selected = new Set();
+
+  function cascadeDelete(id) {
+    for (const c of ctx.store.list('contacts').filter(x => x.accountId === id)) ctx.store.remove('contacts', c.id);
+    for (const dl of ctx.store.list('deals').filter(x => x.accountId === id)) ctx.store.remove('deals', dl.id);
+    for (const i of ctx.store.list('interactions').filter(x => x.accountId === id)) ctx.store.remove('interactions', i.id);
+    for (const ln of ctx.store.list('learnings').filter(x => x.accountId === id)) ctx.store.remove('learnings', ln.id);
+    ctx.store.remove('accounts', id);
+  }
+
+  const count = el('span', { class: 'muted' });
+  const typeSel = el('select', {}, ACCOUNT_TYPES.map(t => el('option', { value: t, text: t })));
+  const bulkbar = el('div', { class: 'bulkbar' }, [
+    count,
+    el('span', { class: 'grow' }),
+    typeSel,
+    el('button', {
+      class: 'btn', text: 'Set type',
+      onClick: () => { for (const id of [...selected]) ctx.store.update('accounts', id, { type: typeSel.value }); },
+    }),
+    el('button', {
+      class: 'btn btn-danger', text: 'Delete',
+      onClick: () => {
+        if (!selected.size) return;
+        if (!confirm(`Delete ${selected.size} account(s) and all their data? This can't be undone.`)) return;
+        for (const id of [...selected]) cascadeDelete(id);
+        selected.clear();
+      },
+    }),
+    el('button', {
+      class: 'btn btn-ghost', text: 'Clear',
+      onClick: () => { selected.clear(); draw(); refreshBar(); },
+    }),
+  ]);
+
+  function refreshBar() {
+    bulkbar.style.display = selected.size ? 'flex' : 'none';
+    count.textContent = `${selected.size} selected`;
+  }
 
   function draw() {
     const q = filter.value.trim().toLowerCase();
@@ -1175,9 +1243,17 @@ function renderAccounts(root, ctx) {
     list.replaceChildren(...(shown.length
       ? shown.map(a => {
           const mine = deals.filter(d => d.accountId === a.id);
+          const cb = el('input', { type: 'checkbox', class: 'sel' });
+          cb.checked = selected.has(a.id);
+          cb.addEventListener('click', e => e.stopPropagation());
+          cb.addEventListener('change', () => {
+            if (cb.checked) selected.add(a.id); else selected.delete(a.id);
+            refreshBar();
+          });
           return el('div', {
             class: 'row', onClick: () => ctx.route('account', a.id),
           }, [
+            cb,
             el('div', { class: 'grow' }, [
               el('strong', { text: a.name }),
               el('div', { class: 'muted', text: a.type }),
@@ -1191,6 +1267,7 @@ function renderAccounts(root, ctx) {
 
   filter.addEventListener('input', draw);
   draw();
+  refreshBar();
 
   const form = el('div', { class: 'card', style: 'display:none; margin-bottom:16px' },
     [accountForm(ctx, null)]);
@@ -1207,7 +1284,7 @@ function renderAccounts(root, ctx) {
         },
       }),
     ]),
-    form, filter, el('div', { style: 'height:12px' }), list,
+    form, filter, bulkbar, el('div', { style: 'height:12px' }), list,
   );
 }
 
@@ -1216,7 +1293,19 @@ function renderAccounts(root, ctx) {
 
 function learningBlock(ctx, account) {
   const learnings = ctx.store.list('learnings').filter(l => l.accountId === account.id);
-  const theme = el('select', {}, LEARNING_THEMES.map(t => el('option', { value: t.id, text: t.label })));
+  // Theme picker: built-in themes plus "+ New section…" to create a custom one.
+  const theme = el('select', {}, [
+    ...LEARNING_THEMES.map(t => el('option', { value: t.id, text: t.label })),
+    el('option', { value: '__new__', text: '+ New section…' }),
+  ]);
+  theme.addEventListener('change', () => {
+    if (theme.value !== '__new__') return;
+    const name = (prompt('Name the new learning section') || '').trim();
+    if (!name) { theme.value = 'other'; return; }
+    const opt = el('option', { value: name, text: name, selected: 'selected' });
+    theme.insertBefore(opt, theme.lastChild);
+    theme.value = name;
+  });
   const text = el('input', { placeholder: 'What did we learn from them?' });
 
   return el('section', { class: 'section' }, [
@@ -1229,7 +1318,7 @@ function learningBlock(ctx, account) {
           const th = learningThemeById(l.theme);
           return el('div', { class: 'row' }, [
             el('div', { class: 'grow' }, [
-              el('span', { class: 'chip theme', text: th ? th.label : l.theme }),
+              el('span', { class: 'chip theme', style: `color:${learningThemeColor(l.theme)}; border-color:${learningThemeColor(l.theme)}`, text: th ? th.label : l.theme }),
               el('div', { class: 'learning-text', text: l.text }),
             ]),
             el('button', {
@@ -1244,7 +1333,7 @@ function learningBlock(ctx, account) {
       el('button', {
         class: 'btn', text: 'Add',
         onClick: () => {
-          if (!text.value.trim()) return;
+          if (!text.value.trim() || theme.value === '__new__') return;
           ctx.store.add('learnings', { accountId: account.id, theme: theme.value, text: text.value.trim() });
           text.value = '';
         },
@@ -1696,29 +1785,35 @@ function renderPilot(root, ctx) {
 
 /* ===== js/views/learnings.js ===== */
 
-/* The Learnings tab: the themes are the overarching learnings; each account's
-   specific learnings roll up under the theme it's tagged with. Click a row to
-   jump to that account. */
+/* The Learnings tab: themes are the overarching learnings; each account's
+   specific learnings roll up under the theme it's tagged with. Built-in themes
+   always show (in order); custom themes appear after. Each section is
+   color-coded so they're easy to tell apart. Click a row to open the account. */
 function renderLearnings(root, ctx) {
   const learnings = ctx.store.list('learnings');
   const acctName = new Map(ctx.store.list('accounts').map(a => [a.id, a.name]));
+
+  // built-in themes first, then any custom (free-text) themes found in the data
+  const custom = [...new Set(learnings.map(l => l.theme).filter(t => !LEARNING_THEME_IDS.includes(t)))].sort();
+  const sections = [...LEARNING_THEMES, ...custom.map(t => ({ id: t, label: t }))];
 
   root.append(
     el('h1', { text: 'Learnings' }),
     el('div', { class: 'muted', text: `${learnings.length} captured across ${new Set(learnings.map(l => l.accountId)).size} accounts` }),
   );
 
-  for (const theme of LEARNING_THEMES) {
+  for (const theme of sections) {
     const items = learnings.filter(l => l.theme === theme.id);
     if (!items.length && theme.id === 'other') continue; // hide an empty "Other"
-    root.append(el('section', { class: 'section' }, [
-      el('div', { class: 'section-head' }, [
+    const color = learningThemeColor(theme.id);
+    root.append(el('section', { class: 'section learn-section', style: `--theme:${color}` }, [
+      el('div', { class: 'section-head learn-head' }, [
         el('h2', { text: theme.label }),
         el('span', { class: 'count', text: String(items.length) }),
       ]),
       items.length
         ? el('div', {}, items.map(l => el('div', {
-            class: 'row', onClick: () => ctx.route('account', l.accountId),
+            class: 'row learn-row', onClick: () => ctx.route('account', l.accountId),
           }, [
             el('div', { class: 'grow' }, [
               el('strong', { text: acctName.get(l.accountId) || 'Unknown account' }),
