@@ -414,6 +414,10 @@ textarea { min-height: 80px; resize: vertical; }
 /* Inline contact editor (account detail). */
 .contact-edit { display: flex; flex-direction: column; gap: 6px; }
 .contact-edit > input { width: 100%; }
+
+/* Designer tab: StepoAI Studio embedded edge-to-edge below the top bar. */
+main[data-route="designer"] { padding: 0; max-width: none; }
+.designer-frame { display: block; width: 100%; height: calc(100vh - 59px); border: 0; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
@@ -428,6 +432,7 @@ textarea { min-height: 80px; resize: vertical; }
       <a href="#/customers" data-route="customers">Customers</a>
       <a href="#/accounts" data-route="accounts">Accounts</a>
       <a href="#/learnings" data-route="learnings">Learnings</a>
+      <a href="#/designer" data-route="designer">Designer</a>
       <a href="#/settings" data-route="settings">Settings</a>
     </nav>
     <div class="topbar-right">
@@ -2605,6 +2610,25 @@ function buildTheme(root, ctx, learnings) {
 }
 
 
+/* ===== js/views/designer.js ===== */
+
+/* The Designer tab embeds StepoAI Studio in-place. It's the same origin as the
+   CRM (both under stepobrady.github.io), so the iframe loads without any
+   cross-origin/X-Frame-Options friction. The Studio keeps its own passcode. */
+const STUDIO_URL = 'https://stepobrady.github.io/stepo-studio/';
+
+function renderDesigner(root, ctx) {
+  root.append(
+    el('iframe', {
+      class: 'designer-frame',
+      src: STUDIO_URL,
+      title: 'StepoAI Studio',
+      allow: 'clipboard-write; clipboard-read',
+    }),
+  );
+}
+
+
 /* ===== js/views/settings.js ===== */
 
 /* Settings tab. Appearance (light/dark) for now; a natural home for more
@@ -3094,6 +3118,7 @@ const ROUTES = {
   accounts: renderAccounts,
   account: renderAccountDetail,
   learnings: renderLearnings,
+  designer: renderDesigner,
   settings: renderSettings,
 };
 
