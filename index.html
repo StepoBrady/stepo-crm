@@ -418,6 +418,12 @@ textarea { min-height: 80px; resize: vertical; }
 /* Designer tab: StepoAI Studio embedded edge-to-edge below the top bar. */
 main[data-route="designer"] { padding: 0; max-width: none; }
 .designer-frame { display: block; width: 100%; height: calc(100vh - 59px); border: 0; }
+
+/* Onboarded contacts. */
+.chip.onboarded { background: var(--accent); color: var(--on-accent); }
+.onboard-check { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--ink-dim); }
+.onboard-check input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent-text); }
+.onboard-check input[type="date"] { max-width: 170px; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
@@ -620,8 +626,8 @@ function makeAccount(fields, now) {
 
 function makeContact(fields, now) {
   return build(
-    { accountId: null, name: '', title: '', email: '', phone: '', linkedin: '', notes: '' },
-    fields, ['accountId', 'name', 'title', 'email', 'phone', 'linkedin', 'notes'], now,
+    { accountId: null, name: '', title: '', email: '', phone: '', linkedin: '', notes: '', onboarded: false, onboardedAt: null },
+    fields, ['accountId', 'name', 'title', 'email', 'phone', 'linkedin', 'notes', 'onboarded', 'onboardedAt'], now,
   );
 }
 
@@ -1726,6 +1732,13 @@ function learningBlock(ctx, account) {
 function contactRow(ctx, c, allInteractions) {
   const row = el('div', { class: 'row' });
 
+  const setOnboarded = (on) => {
+    const changes = { onboarded: on, onboardedAt: on ? (c.onboardedAt || todayStr()) : null };
+    ctx.store.update('contacts', c.id, changes);
+    Object.assign(c, changes);
+    showDisplay();
+  };
+
   const showDisplay = () => {
     const st = contactEmailStatus(allInteractions, c.id);
     row.replaceChildren(
@@ -1733,10 +1746,14 @@ function contactRow(ctx, c, allInteractions) {
         el('strong', { text: c.name }),
         el('div', { class: 'muted', text: [c.title, c.email, c.phone].filter(Boolean).join(' · ') || 'No details' }),
       ]),
+      c.onboarded ? el('span', { class: 'chip onboarded', text: '✓ Onboarded' + (c.onboardedAt ? ' · ' + fmtDate(c.onboardedAt) : '') }) : null,
       st ? el('span', {
         class: 'chip ' + (st.state === 'awaiting_you' ? 'owe' : ''),
         text: (st.state === 'awaiting_you' ? 'You owe a reply · ' : 'Awaiting them · ') + fmtDate(st.since),
       }) : null,
+      c.onboarded
+        ? null
+        : el('button', { class: 'btn btn-ghost', text: 'Onboard', onClick: () => setOnboarded(true) }),
       el('button', { class: 'btn btn-ghost', text: 'Edit', onClick: showEdit }),
       el('button', { class: 'btn btn-ghost btn-danger', text: 'Remove', onClick: () => ctx.store.remove('contacts', c.id) }),
     );
@@ -1747,9 +1764,16 @@ function contactRow(ctx, c, allInteractions) {
     const title = el('input', { value: c.title || '', placeholder: 'Title' });
     const email = el('input', { value: c.email || '', placeholder: 'Email' });
     const phone = el('input', { value: c.phone || '', placeholder: 'Phone' });
+    const onboarded = el('input', { type: 'checkbox' });
+    onboarded.checked = !!c.onboarded;
+    const onboardedAt = el('input', { type: 'date', value: c.onboardedAt || '' });
     const saveEdit = () => {
       if (!name.value.trim()) return;
-      const changes = { name: name.value.trim(), title: title.value.trim(), email: email.value.trim(), phone: phone.value.trim() };
+      const changes = {
+        name: name.value.trim(), title: title.value.trim(), email: email.value.trim(), phone: phone.value.trim(),
+        onboarded: onboarded.checked,
+        onboardedAt: onboarded.checked ? (onboardedAt.value || c.onboardedAt || todayStr()) : null,
+      };
       ctx.store.update('contacts', c.id, changes);
       Object.assign(c, changes); // reflect immediately, independent of re-render timing
       showDisplay();
@@ -1758,6 +1782,7 @@ function contactRow(ctx, c, allInteractions) {
       el('div', { class: 'grow contact-edit' }, [
         name,
         el('div', { class: 'field-row' }, [title, email, phone]),
+        el('label', { class: 'onboard-check' }, [onboarded, el('span', { text: 'Onboarded' }), onboardedAt]),
       ]),
       el('button', { class: 'btn btn-accent', text: 'Save', onClick: saveEdit }),
       el('button', { class: 'btn btn-ghost', text: 'Cancel', onClick: showDisplay }),
@@ -2290,7 +2315,7 @@ function renderDashboard(root, ctx) {
     ['Active pilots', String(pilots.length), fmtMoney(pilots.reduce((n, d) => n + (d.value || 0), 0)) + ' in trial'],
     ['Customers', String(custActive.length), fmtMoney(Math.round(custActive.reduce((n, d) => n + (d.stage === 'monthly' ? (d.value || 0) * 12 : (d.value || 0)), 0))) + ' ARR'],
     ['Accounts', String(accounts.length), `${accounts.filter(a => (a.status || 'active') === 'active').length} active`],
-    ['Contacts', String(contacts.length), 'people tracked'],
+    ['Onboarded', String(contacts.filter(c => c.onboarded).length), 'people on the platform'],
   ];
   const kpiGrid = el('div', { class: 'kpi-grid' }, kpis.map(([label, value, sub]) =>
     el('div', { class: 'card kpi' }, [
@@ -2430,6 +2455,27 @@ function renderDashboard(root, ctx) {
     activeAccts.length > 12 ? el('a', { class: 'muted', href: '#/accounts', text: 'View all accounts →' }) : null,
   ]);
 
+  // ---- Onboarded users -------------------------------------------------
+  const onboarded = contacts.filter(c => c.onboarded)
+    .sort((x, y) => (x.onboardedAt || '') < (y.onboardedAt || '') ? 1 : -1); // most recent first
+  const onboardedCard = el('div', { class: 'card' }, [
+    el('div', { class: 'att-head' }, [
+      el('span', { class: 'att-badge ok', text: String(onboarded.length) }),
+      el('h3', { text: 'Onboarded users' }),
+    ]),
+    onboarded.length
+      ? el('div', {}, onboarded.slice(0, 12).map(c => el('div', {
+          class: 'row att-row', onClick: () => c.accountId && ctx.route('account', c.accountId),
+        }, [
+          el('div', { class: 'grow' }, [
+            el('strong', { text: c.name }),
+            el('div', { class: 'muted', text: (acctById.get(c.accountId) || {}).name || '—' }),
+          ]),
+          el('span', { class: 'att-right', text: c.onboardedAt ? fmtDate(c.onboardedAt) : '' }),
+        ])))
+      : el('div', { class: 'muted', text: 'No one marked onboarded yet — hit “Onboard” on a contact in their account.' }),
+  ]);
+
   root.append(
     el('div', { class: 'dash-head' }, [
       el('h1', { text: 'Overview' }),
@@ -2439,7 +2485,7 @@ function renderDashboard(root, ctx) {
     el('h2', { class: 'dash-section-title', text: 'Needs attention' }),
     attention,
     el('div', { class: 'dash-cols' }, [funnel, momentum]),
-    healthTable,
+    el('div', { class: 'dash-cols' }, [healthTable, onboardedCard]),
   );
 }
 
