@@ -230,7 +230,17 @@ main[data-route="learnings"] > .section { margin-bottom: 0; }
 .chip.cold { background: var(--warn); color: var(--on-accent); }
 .chip.calendar { background: transparent; color: var(--ink-dim); border: 1px solid var(--line); }
 .chip.owe { background: var(--danger); color: #fff; }
-.chip.theme { background: var(--surface-2); color: var(--accent); border: 1px solid var(--line); white-space: normal; }
+/* Theme chips carry their color via an inline --chip. Dark: colored text on a
+   neutral pill. Light: colored text on white washes out (esp. lime/amber), so
+   fill the pill with the color and use dark text (see the light-theme block). */
+.chip.theme { background: var(--surface-2); color: var(--chip, var(--accent)); border: 1px solid var(--chip, var(--line)); white-space: normal; }
+/* Light-theme legibility fixes for colored text that washes out on white. */
+:root[data-theme="light"] .chip.theme { background: var(--chip, var(--surface-2)); color: var(--on-accent); border-color: var(--chip, var(--line)); }
+:root[data-theme="light"] .learn-head h2 { color: var(--ink); }
+:root[data-theme="light"] .learn-head { border-bottom-width: 2px; }
+:root[data-theme="light"] .brand .accent,
+:root[data-theme="light"] .notes summary,
+:root[data-theme="light"] .signin-msg.ok { color: #6E8C00; }
 .learning-text { font-size: 13px; margin-top: 2px; }
 .learnings-reminder { margin-bottom: 16px; border-left: 3px solid var(--accent); }
 .learnings-reminder .learning-text { color: var(--ink); margin-top: 4px; }
@@ -426,6 +436,7 @@ function customerStageById(id) {
 }
 
 const ACCOUNT_TYPES = ['carrier', 'broker', 'contractor', 'other'];
+const ACCOUNT_STATUSES = ['active', 'dead'];
 const INTERACTION_TYPES = ['call', 'meeting', 'email', 'sent', 'note'];
 
 /* Industry is a single top-level tag for filtering the Accounts tab. Fixed
@@ -531,8 +542,8 @@ function build(defaults, fields, allowed, now) {
 
 function makeAccount(fields, now) {
   return build(
-    { name: '', type: 'other', industry: null, website: '', notes: '' },
-    fields, ['name', 'type', 'industry', 'website', 'notes'], now,
+    { name: '', type: 'other', industry: null, status: 'active', website: '', notes: '' },
+    fields, ['name', 'type', 'industry', 'status', 'website', 'notes'], now,
   );
 }
 
@@ -1497,8 +1508,8 @@ function learningBlock(ctx, account) {
           const seg = learningSegmentById(l.segment);
           return el('div', { class: 'row' }, [
             el('div', { class: 'grow' }, [
-              el('span', { class: 'chip theme', style: `color:${learningThemeColor(l.theme)}; border-color:${learningThemeColor(l.theme)}`, text: th ? th.label : l.theme }),
-              ...(seg ? [el('span', { class: 'chip theme', style: `color:${seg.color}; border-color:${seg.color}`, text: seg.label })] : []),
+              el('span', { class: 'chip theme', style: `--chip:${learningThemeColor(l.theme)}`, text: th ? th.label : l.theme }),
+              ...(seg ? [el('span', { class: 'chip theme', style: `--chip:${seg.color}`, text: seg.label })] : []),
               el('div', { class: 'learning-text', text: l.text }),
             ]),
             el('button', {
@@ -2067,7 +2078,7 @@ function marketRow(ctx, l, acctName) {
   }, [
     el('div', { class: 'grow' }, [
       el('div', { class: 'learn-meta' }, [
-        el('span', { class: 'chip theme', style: `color:${learningThemeColor(l.theme)}; border-color:${learningThemeColor(l.theme)}`, text: th ? th.label : l.theme }),
+        el('span', { class: 'chip theme', style: `--chip:${learningThemeColor(l.theme)}`, text: th ? th.label : l.theme }),
         el('span', { class: 'learn-src', text: src }),
       ]),
       el('div', { class: 'learning-text', text: l.text }),
