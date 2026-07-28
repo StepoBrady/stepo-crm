@@ -61,7 +61,8 @@ h1, h2, h3, .brand, .stage-head, .metric-value {
   padding: 12px 20px; border-bottom: 1px solid var(--line);
   position: sticky; top: 0; background: var(--bg); z-index: 20;
 }
-.brand { font-size: 26px; letter-spacing: 0.04em; }
+.brand { font-size: 26px; letter-spacing: 0.04em; color: var(--ink); text-decoration: none; cursor: pointer; }
+.brand:hover { opacity: 0.85; }
 .brand .accent { color: var(--accent-text); }
 .nav { display: flex; gap: 4px; margin-left: 16px; }
 .nav a {
@@ -367,13 +368,55 @@ textarea { min-height: 80px; resize: vertical; }
   .column { flex: 1 1 auto; width: 100%; }
   .card-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Dashboard (landing) ─────────────────────────────────────────────── */
+.dash-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
+.dash-section-title { font-size: 16px; margin: 4px 0 12px; }
+
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 26px; }
+.kpi { padding: 14px 16px; }
+.kpi-label { color: var(--ink-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+.kpi-value { font-family: var(--font-display); font-size: 28px; font-weight: 700; margin: 3px 0 1px; }
+
+.attention-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-bottom: 26px; }
+.attention { padding: 14px 16px; }
+.att-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.att-head h3 { font-size: 15px; }
+.att-badge { min-width: 22px; text-align: center; padding: 2px 7px; border-radius: 999px; font-size: 12px; font-weight: 700; background: var(--surface-2); color: var(--ink); }
+.att-badge.warn { background: var(--warn); color: var(--on-accent); }
+.att-badge.danger { background: var(--danger); color: #fff; }
+.att-badge.ok { background: var(--accent); color: var(--on-accent); }
+.att-row { padding: 8px 10px; margin-bottom: 6px; cursor: pointer; }
+.att-right { color: var(--ink-dim); font-size: 12px; white-space: nowrap; }
+.act-glyph { width: 20px; text-align: center; flex: 0 0 auto; }
+
+.dash-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 26px; align-items: start; }
+.dash-cols > .card { padding: 14px 16px; }
+.dash-cols h3, .health-table + *, .card > h3 { font-size: 15px; margin-bottom: 10px; }
+
+.stage-bar-row { display: flex; align-items: center; gap: 10px; margin: 7px 0; cursor: pointer; }
+.stage-bar-label { width: 90px; font-size: 12px; color: var(--ink-dim); flex: 0 0 auto; }
+.stage-bar-track { flex: 1; height: 14px; background: var(--surface-2); border-radius: 7px; overflow: hidden; }
+.stage-bar-fill { height: 100%; background: var(--accent); border-radius: 7px; }
+.stage-bar-val { width: 118px; text-align: right; font-size: 12px; flex: 0 0 auto; }
+
+.health-table { margin-top: 4px; }
+.health-row { display: flex; align-items: center; gap: 10px; padding: 8px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.health-row:hover { background: var(--surface-2); }
+.health-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+.health-dot.green { background: var(--accent); }
+.health-dot.amber { background: var(--warn); }
+.health-dot.red { background: var(--danger); }
+.health-age { color: var(--ink-dim); font-size: 12px; width: 72px; text-align: right; flex: 0 0 auto; }
+
+@media (max-width: 820px) { .dash-cols { grid-template-columns: 1fr; } }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 <div id="app">
   <header class="topbar">
-    <div class="brand">STEPO<span class="accent">CRM</span></div>
+    <a href="#/dashboard" class="brand" title="Overview">STEPO<span class="accent">CRM</span></a>
     <nav class="nav">
       <a href="#/today" data-route="today">Today</a>
       <a href="#/pipeline" data-route="pipeline">Pipeline</a>
@@ -1335,10 +1378,8 @@ function stageColumn(ctx, { stage, deals, today, track }) {
 /* ===== js/views/accounts.js ===== */
 
 function accountForm(ctx, account) {
-  const values = account || { name: '', type: 'other', industry: null, status: 'active', website: '', notes: '' };
+  const values = account || { name: '', industry: null, status: 'active', website: '', notes: '' };
   const name = el('input', { value: values.name, placeholder: 'Company name' });
-  const type = el('select', {}, ACCOUNT_TYPES.map(t =>
-    el('option', { value: t, text: t, ...(t === values.type ? { selected: 'selected' } : {}) })));
   const industry = el('select', {}, [
     el('option', { value: '', text: '— industry —' }),
     ...INDUSTRIES.map(i =>
@@ -1352,7 +1393,6 @@ function accountForm(ctx, account) {
   return el('div', {}, [
     el('label', { text: 'Name' }), name,
     el('div', { class: 'field-row' }, [
-      el('div', {}, [el('label', { text: 'Type' }), type]),
       el('div', {}, [el('label', { text: 'Industry' }), industry]),
       el('div', {}, [el('label', { text: 'Status' }), status]),
     ]),
@@ -1364,7 +1404,7 @@ function accountForm(ctx, account) {
         onClick: () => {
           if (!name.value.trim()) return;
           const fields = {
-            name: name.value.trim(), type: type.value, industry: industry.value || null,
+            name: name.value.trim(), industry: industry.value || null,
             status: status.value, website: website.value.trim(), notes: notes.value,
           };
           if (account) ctx.store.update('accounts', account.id, fields);
@@ -1417,7 +1457,6 @@ function renderAccounts(root, ctx) {
   }
 
   const count = el('span', { class: 'muted' });
-  const typeSel = el('select', {}, ACCOUNT_TYPES.map(t => el('option', { value: t, text: t })));
   const bulkIndustrySel = el('select', {}, INDUSTRIES.map(i => el('option', { value: i.id, text: i.label })));
   const bulkStatusSel = el('select', {}, ACCOUNT_STATUSES.map(s => el('option', { value: s, text: s })));
   const bulkSet = (field, valEl) => () => {
@@ -1426,7 +1465,6 @@ function renderAccounts(root, ctx) {
   const bulkbar = el('div', { class: 'bulkbar' }, [
     count,
     el('span', { class: 'grow' }),
-    typeSel, el('button', { class: 'btn', text: 'Set type', onClick: bulkSet('type', typeSel) }),
     bulkIndustrySel, el('button', { class: 'btn', text: 'Set industry', onClick: bulkSet('industry', bulkIndustrySel) }),
     bulkStatusSel, el('button', { class: 'btn', text: 'Set status', onClick: bulkSet('status', bulkStatusSel) }),
     el('button', {
@@ -1484,7 +1522,7 @@ function renderAccounts(root, ctx) {
             cb,
             el('div', { class: 'grow' }, [
               el('strong', { text: a.name }),
-              el('div', { class: 'muted', text: a.industry ? `${industryById(a.industry)?.label || a.industry} · ${a.type}` : a.type }),
+              el('div', { class: 'muted', text: a.industry ? (industryById(a.industry)?.label || a.industry) : 'No industry' }),
             ]),
             dead ? el('span', { class: 'chip dead-chip', text: 'dead' }) : null,
             el('span', { class: 'chip', text: `${mine.length} deal${mine.length === 1 ? '' : 's'}` }),
@@ -1731,20 +1769,18 @@ function renderAccountDetail(root, ctx, accountId) {
 
   // Always-visible quick editor for the attributes changed most often, with an
   // explicit Save. (The full Edit form still covers name/website/notes.)
-  const attrType = el('select', {}, ACCOUNT_TYPES.map(t => el('option', { value: t, text: t, ...(t === account.type ? { selected: 'selected' } : {}) })));
   const attrIndustry = el('select', {}, [
     el('option', { value: '', text: '— industry —' }),
     ...INDUSTRIES.map(i => el('option', { value: i.id, text: i.label, ...(i.id === account.industry ? { selected: 'selected' } : {}) })),
   ]);
   const attrStatus = el('select', {}, ACCOUNT_STATUSES.map(s => el('option', { value: s, text: s, ...(s === (account.status || 'active') ? { selected: 'selected' } : {}) })));
   const attrBar = el('div', { class: 'attr-bar card' }, [
-    el('div', { class: 'attr-field' }, [el('label', { text: 'Type' }), attrType]),
     el('div', { class: 'attr-field' }, [el('label', { text: 'Industry' }), attrIndustry]),
     el('div', { class: 'attr-field' }, [el('label', { text: 'Status' }), attrStatus]),
     el('button', {
       class: 'btn btn-accent', text: 'Save',
       onClick: () => ctx.store.update('accounts', account.id, {
-        type: attrType.value, industry: attrIndustry.value || null, status: attrStatus.value,
+        industry: attrIndustry.value || null, status: attrStatus.value,
       }),
     }),
   ]);
@@ -1753,7 +1789,6 @@ function renderAccountDetail(root, ctx, accountId) {
     el('div', { class: 'section-head' }, [
       el('h1', { text: account.name }),
       account.industry ? el('span', { class: 'chip', text: industryById(account.industry)?.label || account.industry }) : null,
-      el('span', { class: 'chip', text: account.type }),
       (account.status || 'active') === 'dead' ? el('span', { class: 'chip dead-chip', text: 'dead' }) : null,
       safeHref(account.website)
         ? el('a', { href: safeHref(account.website), target: '_blank', rel: 'noopener', class: 'muted', text: account.website })
@@ -2078,6 +2113,187 @@ function renderCustomers(root, ctx) {
           stage, today, track: 'customer',
           deals: deals.filter(d => d.stage === stage.id),
         }))),
+  );
+}
+
+
+/* ===== js/views/dashboard.js ===== */
+
+/* The landing page: a single-screen command center. Answers "what's the state
+   of everything?" — health, money, momentum, and what needs attention — not
+   just today's follow-ups. Reached via the STEPOCRM logo (and the default). */
+function renderDashboard(root, ctx) {
+  const today = todayStr();
+  const accounts = ctx.store.list('accounts').filter(a => !a.deletedAt);
+  const deals = ctx.store.list('deals').filter(d => !d.deletedAt);
+  const contacts = ctx.store.list('contacts').filter(c => !c.deletedAt);
+  const interactions = ctx.store.list('interactions').filter(i => !i.deletedAt);
+  const acctById = new Map(accounts.map(a => [a.id, a]));
+
+  const isOpen = d => { const s = stageById(d.stage); return !s || !s.isClosed; };
+  const pipeline = deals.filter(d => (d.track || 'pipeline') === 'pipeline');
+  const pipelineOpen = pipeline.filter(isOpen);
+  const pilots = deals.filter(d => d.track === 'pilot');
+  const custActive = deals.filter(d => d.track === 'customer' && d.stage !== 'churned');
+  const openWorkable = deals.filter(d => (d.track || 'pipeline') !== 'backburner' && isOpen(d));
+
+  // ---- KPI cards -------------------------------------------------------
+  const kpis = [
+    ['Open pipeline', fmtMoney(openPipelineValue(pipelineOpen)), `${pipelineOpen.length} open deals`],
+    ['Weighted forecast', fmtMoney(weightedForecast(pipelineOpen)), 'probability-adjusted'],
+    ['Active pilots', String(pilots.length), fmtMoney(pilots.reduce((n, d) => n + (d.value || 0), 0)) + ' in trial'],
+    ['Customers', String(custActive.length), fmtMoney(custActive.reduce((n, d) => n + (d.value || 0), 0)) + ' / yr'],
+    ['Accounts', String(accounts.length), `${accounts.filter(a => (a.status || 'active') === 'active').length} active`],
+    ['Contacts', String(contacts.length), 'people tracked'],
+  ];
+  const kpiGrid = el('div', { class: 'kpi-grid' }, kpis.map(([label, value, sub]) =>
+    el('div', { class: 'card kpi' }, [
+      el('div', { class: 'kpi-label', text: label }),
+      el('div', { class: 'kpi-value', text: value }),
+      el('div', { class: 'muted', text: sub }),
+    ])));
+
+  // ---- Needs attention -------------------------------------------------
+  const cold = openWorkable.filter(d => isGoingCold(d, interactions, today))
+    .sort((a, b) => (lastInteractionDate(interactions, a.id) || '') < (lastInteractionDate(interactions, b.id) || '') ? -1 : 1);
+  const overdue = openWorkable.filter(d => d.nextAction && d.nextAction.dueDate && dueBucket(d.nextAction.dueDate, today) === 'overdue')
+    .sort((a, b) => a.nextAction.dueDate < b.nextAction.dueDate ? -1 : 1);
+  const owed = repliesOwed(interactions, contacts, accounts);
+
+  const dealLine = (d, right) => el('div', {
+    class: 'row att-row', onClick: () => openDealDrawer(ctx, d.id),
+  }, [
+    el('div', { class: 'grow' }, [
+      el('strong', { text: d.name }),
+      el('div', { class: 'muted', text: (acctById.get(d.accountId) || {}).name || '—' }),
+    ]),
+    right ? el('span', { class: 'att-right', text: right }) : null,
+  ]);
+
+  const attentionCard = (title, count, tone, items) => el('div', { class: 'card attention' }, [
+    el('div', { class: 'att-head' }, [
+      el('span', { class: `att-badge ${tone}`, text: String(count) }),
+      el('h3', { text: title }),
+    ]),
+    items.length
+      ? el('div', {}, items)
+      : el('div', { class: 'muted', text: 'All clear.' }),
+  ]);
+
+  const daysAgo = (dateStr) => {
+    if (!dateStr) return '∞';
+    const d = dateStr.slice(0, 10);
+    const [y, m, dd] = d.split('-').map(Number);
+    const then = Date.UTC(y, m - 1, dd);
+    const [ty, tm, td] = today.split('-').map(Number);
+    const nowU = Date.UTC(ty, tm - 1, td);
+    return Math.round((nowU - then) / 86400000) + 'd';
+  };
+
+  const attention = el('div', { class: 'attention-grid' }, [
+    attentionCard('Going cold', cold.length, 'warn',
+      cold.slice(0, 5).map(d => dealLine(d, daysAgo(lastInteractionDate(interactions, d.id)) + ' quiet'))),
+    attentionCard('Overdue next steps', overdue.length, 'danger',
+      overdue.slice(0, 5).map(d => dealLine(d, 'due ' + d.nextAction.dueDate.slice(5)))),
+    attentionCard('Replies owed', owed.length, 'danger',
+      owed.slice(0, 5).map(o => el('div', {
+        class: 'row att-row', onClick: () => o.account && ctx.route('account', o.account.id),
+      }, [
+        el('div', { class: 'grow' }, [
+          el('strong', { text: o.contact.name }),
+          el('div', { class: 'muted', text: (o.account || {}).name || '—' }),
+        ]),
+        el('span', { class: 'att-right', text: 'since ' + o.since.slice(5) }),
+      ]))),
+  ]);
+
+  // ---- Pipeline by stage ----------------------------------------------
+  const stageMax = Math.max(1, ...STAGES.filter(s => !s.isClosed).map(s =>
+    openPipelineValue(pipelineOpen.filter(d => d.stage === s.id))));
+  const funnel = el('div', { class: 'card' }, [
+    el('h3', { text: 'Pipeline by stage' }),
+    ...STAGES.filter(s => !s.isClosed).map(s => {
+      const ds = pipelineOpen.filter(d => d.stage === s.id);
+      const val = openPipelineValue(ds);
+      return el('div', { class: 'stage-bar-row', onClick: () => ctx.route('pipeline') }, [
+        el('div', { class: 'stage-bar-label', text: s.label }),
+        el('div', { class: 'stage-bar-track' }, [
+          el('div', { class: 'stage-bar-fill', style: `width:${Math.round((val / stageMax) * 100)}%` }),
+        ]),
+        el('div', { class: 'stage-bar-val', text: `${ds.length} · ${fmtMoney(val)}` }),
+      ]);
+    }),
+  ]);
+
+  // ---- Momentum (last 7 days) -----------------------------------------
+  const weekAgo = (() => {
+    const [ty, tm, td] = today.split('-').map(Number);
+    return new Date(Date.UTC(ty, tm - 1, td - 7)).toISOString().slice(0, 10);
+  })();
+  const recent = interactions.filter(i => (i.date || '').slice(0, 10) >= weekAgo)
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+  const glyph = i => i.type === 'email' ? (i.direction === 'in' ? '↘' : '↗') : ({ meeting: '📅', call: '📞', sent: '📎', note: '📝' }[i.type] || '•');
+  const momentum = el('div', { class: 'card' }, [
+    el('div', { class: 'att-head' }, [
+      el('span', { class: 'att-badge ok', text: String(recent.length) }),
+      el('h3', { text: 'Activity · last 7 days' }),
+    ]),
+    recent.length
+      ? el('div', {}, recent.slice(0, 8).map(i => el('div', {
+          class: 'row att-row', onClick: () => i.accountId && ctx.route('account', i.accountId),
+        }, [
+          el('span', { class: 'act-glyph', text: glyph(i) }),
+          el('div', { class: 'grow' }, [
+            el('div', { text: i.summary || i.type }),
+            el('div', { class: 'muted', text: (acctById.get(i.accountId) || {}).name || '—' }),
+          ]),
+          el('span', { class: 'att-right', text: (i.date || '').slice(5, 10) }),
+        ])))
+      : el('div', { class: 'muted', text: 'No activity logged this week.' }),
+  ]);
+
+  // ---- Account health --------------------------------------------------
+  const lastTouchByAcct = new Map();
+  for (const i of interactions) {
+    if (!i.accountId) continue;
+    const cur = lastTouchByAcct.get(i.accountId);
+    if (!cur || (i.date || '') > cur) lastTouchByAcct.set(i.accountId, i.date || '');
+  }
+  const openByAcct = new Map();
+  for (const d of openWorkable) openByAcct.set(d.accountId, (openByAcct.get(d.accountId) || 0) + (d.value || 0));
+
+  const health = (last) => {
+    const age = last ? Number(daysAgo(last).replace('d', '')) : 9999;
+    return age <= 7 ? 'green' : age <= 21 ? 'amber' : 'red';
+  };
+  const activeAccts = accounts.filter(a => (a.status || 'active') === 'active' && openByAcct.has(a.id))
+    .map(a => ({ a, last: lastTouchByAcct.get(a.id) || '', open: openByAcct.get(a.id) || 0 }))
+    .sort((x, y) => (x.last || '') < (y.last || '') ? -1 : 1); // stalest first
+
+  const healthTable = el('div', { class: 'card' }, [
+    el('div', { class: 'att-head' }, [el('h3', { text: 'Account health' }), el('span', { class: 'muted', text: `${activeAccts.length} with open work` })]),
+    el('div', { class: 'health-table' },
+      activeAccts.slice(0, 12).map(({ a, last, open }) => el('div', {
+        class: 'health-row', onClick: () => ctx.route('account', a.id),
+      }, [
+        el('span', { class: `health-dot ${health(last)}` }),
+        el('div', { class: 'grow' }, [el('strong', { text: a.name })]),
+        el('span', { class: 'att-right', text: fmtMoney(open) }),
+        el('span', { class: 'health-age', text: last ? daysAgo(last) + ' ago' : 'never' }),
+      ]))),
+    activeAccts.length > 12 ? el('a', { class: 'muted', href: '#/accounts', text: 'View all accounts →' }) : null,
+  ]);
+
+  root.append(
+    el('div', { class: 'dash-head' }, [
+      el('h1', { text: 'Overview' }),
+      el('span', { class: 'muted', text: `as of ${today}` }),
+    ]),
+    kpiGrid,
+    el('h2', { class: 'dash-section-title', text: 'Needs attention' }),
+    attention,
+    el('div', { class: 'dash-cols' }, [funnel, momentum]),
+    healthTable,
   );
 }
 
@@ -2729,6 +2945,7 @@ function mountBrainDump(ctx) {
 /* ===== js/app.js ===== */
 
 const ROUTES = {
+  dashboard: renderDashboard,
   today: renderToday,
   pipeline: renderPipeline,
   pilot: renderPilot,
@@ -2762,9 +2979,9 @@ function boot() {
   let mounted = false;     // global overlays mounted once
 
   function parseHash() {
-    const raw = (location.hash || '#/today').slice(2);
+    const raw = (location.hash || '#/dashboard').slice(2);
     const [name, param] = raw.split('/');
-    return { name: ROUTES[name] ? name : 'today', param: param || null };
+    return { name: ROUTES[name] ? name : 'dashboard', param: param || null };
   }
 
   function render() {
