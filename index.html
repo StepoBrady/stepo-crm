@@ -116,8 +116,24 @@ main[data-route="learnings"] {
   grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
 }
 main[data-route="learnings"] > h1,
+main[data-route="learnings"] > .toggle-row,
 main[data-route="learnings"] > .muted { grid-column: 1 / -1; margin-bottom: 0; }
 main[data-route="learnings"] > .section { margin-bottom: 0; }
+
+/* By market / By theme switch. */
+.toggle-row { display: flex; gap: 8px; }
+.toggle-btn {
+  padding: 6px 14px; border: 1px solid var(--line); border-radius: 999px;
+  background: transparent; color: var(--ink-dim); font: inherit; cursor: pointer;
+}
+.toggle-btn:hover { border-color: var(--accent); }
+.toggle-btn.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+
+/* Market-view rows: theme chip + source label above the learning text. */
+.learn-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 2px; }
+.learn-src { color: var(--ink-dim); font-size: 12px; }
+.learn-row.market-level { cursor: default; }
+.learn-row.market-level .learn-src { font-style: italic; }
 
 /* Account detail: management (deals + contacts) on the left, activity stream
    on the right. Stacks below 900px. */
@@ -388,6 +404,23 @@ const THEME_COLORS = {
   inspection_docs: '#3FE0C5', liability: '#FF6FB5', cya: '#FF8A5B',
   look_good: '#F5D547', adoption: '#B388FF', other: '#9A9A9A',
 };
+/* Market segments — a second axis for learnings so each industry can be
+   understood on its own, independent of any one account. A learning may be
+   tagged with a segment and may have NO account (a market-level insight). */
+const LEARNING_SEGMENTS = [
+  { id: 'broker',               label: 'Brokers',               color: '#5B9DFF' },
+  { id: 'carrier',              label: 'Insurance carriers',    color: '#FFB020' },
+  { id: 'insured',              label: 'Insureds',              color: '#3FE0C5' },
+  { id: 'general_contractor',   label: 'General contractors',   color: '#B388FF' },
+  { id: 'specialty_contractor', label: 'Specialty contractors', color: '#FF6FB5' },
+  { id: 'consultant',           label: 'Consultants',           color: '#7FE07F' },
+  { id: 'manufacturing',        label: 'Manufacturing',         color: '#FF8A5B' },
+];
+const LEARNING_SEGMENT_IDS = LEARNING_SEGMENTS.map(s => s.id);
+function learningSegmentById(id) {
+  return LEARNING_SEGMENTS.find(s => s.id === id);
+}
+
 const THEME_PALETTE = ['#5B9DFF', '#FFB020', '#3FE0C5', '#B388FF', '#FF6FB5', '#7FE07F', '#FF8A5B', '#F5D547'];
 function learningThemeColor(id) {
   if (THEME_COLORS[id]) return THEME_COLORS[id];
@@ -462,8 +495,8 @@ function makeDeal(fields, now) {
 
 function makeLearning(fields, now) {
   return build(
-    { accountId: null, dealId: null, theme: 'other', text: '' },
-    fields, ['accountId', 'dealId', 'theme', 'text'], now,
+    { accountId: null, dealId: null, segment: null, theme: 'other', text: '' },
+    fields, ['accountId', 'dealId', 'segment', 'theme', 'text'], now,
   );
 }
 
@@ -1318,6 +1351,12 @@ function learningBlock(ctx, account) {
     theme.insertBefore(opt, theme.lastChild);
     theme.value = name;
   });
+  // Optional market segment, so this account's learning also rolls up under an
+  // industry in the Learnings "By market" view. Blank = account-only.
+  const segment = el('select', {}, [
+    el('option', { value: '', text: '— market (optional) —' }),
+    ...LEARNING_SEGMENTS.map(s => el('option', { value: s.id, text: s.label })),
+  ]);
   const text = el('input', { placeholder: 'What did we learn from them?' });
 
   return el('section', { class: 'section' }, [
@@ -1328,9 +1367,11 @@ function learningBlock(ctx, account) {
     ...(learnings.length
       ? learnings.map(l => {
           const th = learningThemeById(l.theme);
+          const seg = learningSegmentById(l.segment);
           return el('div', { class: 'row' }, [
             el('div', { class: 'grow' }, [
               el('span', { class: 'chip theme', style: `color:${learningThemeColor(l.theme)}; border-color:${learningThemeColor(l.theme)}`, text: th ? th.label : l.theme }),
+              ...(seg ? [el('span', { class: 'chip theme', style: `color:${seg.color}; border-color:${seg.color}`, text: seg.label })] : []),
               el('div', { class: 'learning-text', text: l.text }),
             ]),
             el('button', {
@@ -1341,12 +1382,12 @@ function learningBlock(ctx, account) {
         })
       : [el('div', { class: 'empty', text: 'No learnings yet.' })]),
     el('div', { class: 'field-row', style: 'margin-top:8px' }, [
-      theme, text,
+      theme, segment, text,
       el('button', {
         class: 'btn', text: 'Add',
         onClick: () => {
           if (!text.value.trim() || theme.value === '__new__') return;
-          ctx.store.add('learnings', { accountId: account.id, theme: theme.value, text: text.value.trim() });
+          ctx.store.add('learnings', { accountId: account.id, segment: segment.value || null, theme: theme.value, text: text.value.trim() });
           text.value = '';
         },
       }),
@@ -1797,22 +1838,107 @@ function renderPilot(root, ctx) {
 
 /* ===== js/views/learnings.js ===== */
 
-/* The Learnings tab: themes are the overarching learnings; each account's
-   specific learnings roll up under the theme it's tagged with. Built-in themes
-   always show (in order); custom themes appear after. Each section is
-   color-coded so they're easy to tell apart. Click a row to open the account. */
-function renderLearnings(root, ctx) {
-  const learnings = ctx.store.list('learnings');
-  const acctName = new Map(ctx.store.list('accounts').map(a => [a.id, a.name]));
+/* The Learnings tab has two lenses on the same data:
+   - "By market" groups learnings by industry segment (broker, carrier, GC…) so
+     each market can be understood on its own. Market-level learnings (no
+     account) live here; account learnings tagged with a segment show too.
+   - "By theme" groups by the overarching theme a learning is tagged with.
+   Both are color-coded. The choice persists across re-renders. */
+let mode = 'market';
 
-  // built-in themes first, then any custom (free-text) themes found in the data
-  const custom = [...new Set(learnings.map(l => l.theme).filter(t => !LEARNING_THEME_IDS.includes(t)))].sort();
-  const sections = [...LEARNING_THEMES, ...custom.map(t => ({ id: t, label: t }))];
+function renderLearnings(root, ctx) {
+  const draw = () => { root.replaceChildren(); renderLens(root, ctx, draw); };
+  draw();
+}
+
+function renderLens(root, ctx, draw) {
+  const learnings = ctx.store.list('learnings');
+  const toggle = (label, m) => el('button', {
+    class: 'toggle-btn' + (mode === m ? ' active' : ''),
+    text: label, onClick: () => { mode = m; draw(); },
+  });
 
   root.append(
     el('h1', { text: 'Learnings' }),
-    el('div', { class: 'muted', text: `${learnings.length} captured across ${new Set(learnings.map(l => l.accountId)).size} accounts` }),
+    el('div', { class: 'toggle-row' }, [toggle('By market', 'market'), toggle('By theme', 'theme')]),
   );
+
+  if (mode === 'market') buildMarket(root, ctx, learnings, draw);
+  else buildTheme(root, ctx, learnings);
+}
+
+/* ---- By market ------------------------------------------------------- */
+function buildMarket(root, ctx, learnings, draw) {
+  const acctName = new Map(ctx.store.list('accounts').map(a => [a.id, a.name]));
+  const tagged = learnings.filter(l => l.segment);
+  root.append(el('div', {
+    class: 'muted',
+    text: `${tagged.length} learnings tagged across ${new Set(tagged.map(l => l.segment)).size} markets — track each industry on its own`,
+  }));
+
+  for (const seg of LEARNING_SEGMENTS) {
+    const items = learnings.filter(l => l.segment === seg.id);
+    root.append(el('section', { class: 'section learn-section', style: `--theme:${seg.color}` }, [
+      el('div', { class: 'section-head learn-head' }, [
+        el('h2', { text: seg.label }),
+        el('span', { class: 'count', text: String(items.length) }),
+      ]),
+      items.length
+        ? el('div', {}, items.map(l => marketRow(ctx, l, acctName)))
+        : el('div', { class: 'empty', text: 'No learnings for this market yet.' }),
+      addMarketForm(ctx, seg, draw),
+    ]));
+  }
+}
+
+function marketRow(ctx, l, acctName) {
+  const th = learningThemeById(l.theme);
+  const src = l.accountId
+    ? (acctName.get(l.accountId) || 'Unknown account')
+    : 'Market-level';
+  return el('div', {
+    class: 'row learn-row' + (l.accountId ? '' : ' market-level'),
+    onClick: l.accountId ? () => ctx.route('account', l.accountId) : undefined,
+  }, [
+    el('div', { class: 'grow' }, [
+      el('div', { class: 'learn-meta' }, [
+        el('span', { class: 'chip theme', style: `color:${learningThemeColor(l.theme)}; border-color:${learningThemeColor(l.theme)}`, text: th ? th.label : l.theme }),
+        el('span', { class: 'learn-src', text: src }),
+      ]),
+      el('div', { class: 'learning-text', text: l.text }),
+    ]),
+    el('button', {
+      class: 'btn btn-ghost btn-danger', text: 'Remove',
+      onClick: (e) => { e.stopPropagation(); ctx.store.remove('learnings', l.id); },
+    }),
+  ]);
+}
+
+function addMarketForm(ctx, seg, draw) {
+  const theme = el('select', {}, LEARNING_THEMES.map(t => el('option', { value: t.id, text: t.label })));
+  const text = el('input', { placeholder: `What are we learning about ${seg.label.toLowerCase()}?` });
+  const submit = () => {
+    if (!text.value.trim()) return;
+    ctx.store.add('learnings', { accountId: null, segment: seg.id, theme: theme.value, text: text.value.trim() });
+    text.value = '';
+    draw();
+  };
+  text.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+  return el('div', { class: 'field-row', style: 'margin-top:8px' }, [
+    theme, text, el('button', { class: 'btn', text: 'Add', onClick: submit }),
+  ]);
+}
+
+/* ---- By theme -------------------------------------------------------- */
+function buildTheme(root, ctx, learnings) {
+  const acctName = new Map(ctx.store.list('accounts').map(a => [a.id, a.name]));
+  const custom = [...new Set(learnings.map(l => l.theme).filter(t => !LEARNING_THEME_IDS.includes(t)))].sort();
+  const sections = [...LEARNING_THEMES, ...custom.map(t => ({ id: t, label: t }))];
+
+  root.append(el('div', {
+    class: 'muted',
+    text: `${learnings.length} captured across ${new Set(learnings.filter(l => l.accountId).map(l => l.accountId)).size} accounts`,
+  }));
 
   for (const theme of sections) {
     const items = learnings.filter(l => l.theme === theme.id);
@@ -1824,14 +1950,20 @@ function renderLearnings(root, ctx) {
         el('span', { class: 'count', text: String(items.length) }),
       ]),
       items.length
-        ? el('div', {}, items.map(l => el('div', {
-            class: 'row learn-row', onClick: () => ctx.route('account', l.accountId),
-          }, [
-            el('div', { class: 'grow' }, [
-              el('strong', { text: acctName.get(l.accountId) || 'Unknown account' }),
-              el('div', { class: 'learning-text', text: l.text }),
-            ]),
-          ])))
+        ? el('div', {}, items.map(l => {
+            const seg = learningSegmentById(l.segment);
+            const src = l.accountId ? (acctName.get(l.accountId) || 'Unknown account')
+              : (seg ? `${seg.label} · market-level` : 'Market-level');
+            return el('div', {
+              class: 'row learn-row' + (l.accountId ? '' : ' market-level'),
+              onClick: l.accountId ? () => ctx.route('account', l.accountId) : undefined,
+            }, [
+              el('div', { class: 'grow' }, [
+                el('strong', { text: src }),
+                el('div', { class: 'learning-text', text: l.text }),
+              ]),
+            ]);
+          }))
         : el('div', { class: 'empty', text: 'Nothing captured under this theme yet.' }),
     ]));
   }
