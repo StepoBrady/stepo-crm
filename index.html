@@ -147,7 +147,8 @@ main[data-route="learnings"] > .section { margin-bottom: 0; }
 /* Accounts: a card grid rather than one narrow column. */
 .card-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
 .card-grid .row { margin-bottom: 0; height: 100%; }
-.row .sel { width: 18px; height: 18px; flex: 0 0 auto; accent-color: var(--accent); cursor: pointer; }
+.row .sel { width: 14px; height: 14px; flex: 0 0 auto; accent-color: var(--accent); cursor: pointer; }
+.ai-cost { color: var(--ink-dim); font-size: 12px; white-space: nowrap; align-self: center; }
 
 /* Bulk-select toolbar on the Accounts page. */
 .bulkbar {
@@ -312,6 +313,7 @@ textarea { min-height: 80px; resize: vertical; }
       <a href="#/today" data-route="today">Today</a>
       <a href="#/pipeline" data-route="pipeline">Pipeline</a>
       <a href="#/pilot" data-route="pilot">Pilot</a>
+      <a href="#/customers" data-route="customers">Customers</a>
       <a href="#/accounts" data-route="accounts">Accounts</a>
       <a href="#/learnings" data-route="learnings">Learnings</a>
     </nav>
@@ -319,6 +321,7 @@ textarea { min-height: 80px; resize: vertical; }
       <button id="braindump-btn" class="btn btn-ghost" title="Brain dump">🧠 Dump</button>
       <button id="quick-add-btn" class="btn btn-accent">+ Log</button>
       <button id="search-btn" class="btn btn-ghost" title="Ctrl-K">Search</button>
+      <div id="ai-cost" class="ai-cost" title="Estimated Claude API cost for this CRM this month (brain-dump usage)"></div>
       <div id="sync-status" class="sync-status"></div>
     </div>
   </header>
@@ -357,10 +360,11 @@ const STAGES = [
 
 const STAGE_IDS = STAGES.map(s => s.id);
 
-/* A deal lives on one of three tracks. 'pipeline' uses STAGES (the sales
-   funnel); 'pilot' uses PILOT_STAGES (post-sale trial); 'backburner' is a
-   keep-warm list with no stages. */
-const TRACKS = ['pipeline', 'pilot', 'backburner'];
+/* A deal lives on one of four tracks. 'pipeline' uses STAGES (the sales
+   funnel); 'pilot' uses PILOT_STAGES (post-sale trial); 'customer' uses
+   CUSTOMER_STAGES (live paying customers); 'backburner' is a keep-warm list
+   with no stages. */
+const TRACKS = ['pipeline', 'pilot', 'customer', 'backburner'];
 
 const PILOT_STAGES = [
   { id: 'kickoff',    label: 'Kickoff',    probability: 0.70 },
@@ -372,6 +376,18 @@ const PILOT_STAGES = [
 const PILOT_STAGE_IDS = PILOT_STAGES.map(s => s.id);
 function pilotStageById(id) {
   return PILOT_STAGES.find(s => s.id === id);
+}
+
+/* Live paying customers, grouped by billing cadence. 'churned' keeps former
+   customers on the board without deleting the history. */
+const CUSTOMER_STAGES = [
+  { id: 'monthly', label: 'Monthly',  probability: 1 },
+  { id: 'annual',  label: 'Annual',   probability: 1 },
+  { id: 'churned', label: 'Churned',  probability: 0 },
+];
+const CUSTOMER_STAGE_IDS = CUSTOMER_STAGES.map(s => s.id);
+function customerStageById(id) {
+  return CUSTOMER_STAGES.find(s => s.id === id);
 }
 
 const ACCOUNT_TYPES = ['carrier', 'broker', 'contractor', 'other'];
@@ -733,6 +749,27 @@ async function invokeFunction(name, body) {
 function onAuthChange(cb) { return supa.auth.onAuthStateChange((_evt, session) => cb(session)); }
 async function getActiveSession() { const { data } = await supa.auth.getSession(); return data.session || null; }
 
+/* Approximate Claude API pricing, USD per 1M tokens. Update if prices change.
+   Only the CRM's own AI calls (the brain-dump function) are billed here — the
+   "sync my meetings" flow runs in Claude, not against this key. */
+const AI_PRICES = { 'claude-haiku-4-5': { in: 1.00, out: 5.00 } };
+const AI_PRICE_DEFAULT = { in: 1.00, out: 5.00 };
+
+/* Sum this calendar month's logged token usage into an estimated USD cost. */
+async function fetchMonthlyAiCost() {
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  const { data, error } = await supa.from('ai_usage')
+    .select('model, input_tokens, output_tokens').gte('created_at', monthStart);
+  if (error || !data) return { costUsd: 0, calls: 0 };
+  let cost = 0;
+  for (const r of data) {
+    const p = AI_PRICES[r.model] || AI_PRICE_DEFAULT;
+    cost += ((r.input_tokens || 0) / 1e6) * p.in + ((r.output_tokens || 0) / 1e6) * p.out;
+  }
+  return { costUsd: cost, calls: data.length };
+}
+
 /* ── camelCase (app) ↔ snake_case (Postgres) mapping ──────────────────────
    Only top-level column names are converted; nested values (e.g. next_action's
    {text, dueDate}) are stored verbatim as jsonb. */
@@ -915,7 +952,8 @@ function openDealDrawer(ctx, dealId) {
 
   // Which stage vocabulary this deal uses depends on its track.
   const currentTrack = deal.track || 'pipeline';
-  const stageOptions = currentTrack === 'pilot' ? PILOT_STAGES : STAGES;
+  const stageOptions = currentTrack === 'pilot' ? PILOT_STAGES
+    : currentTrack === 'customer' ? CUSTOMER_STAGES : STAGES;
 
   const name = el('input', { value: deal.name });
   const value = el('input', { type: 'number', value: String(deal.value) });
@@ -992,11 +1030,12 @@ function openDealDrawer(ctx, dealId) {
     let nextStage = deal.stage;
     if (track === 'pipeline' && !STAGE_IDS.includes(nextStage)) nextStage = 'negotiation';
     if (track === 'pilot' && !PILOT_STAGE_IDS.includes(nextStage)) nextStage = 'kickoff';
+    if (track === 'customer' && !CUSTOMER_STAGE_IDS.includes(nextStage)) nextStage = 'annual';
     ctx.store.update('deals', deal.id, { track, stage: nextStage });
     closeDealDrawer();
   }
   const trackControl = el('div', { class: 'track-control' },
-    [['pipeline', 'Pipeline'], ['pilot', 'Pilot'], ['backburner', 'Back burner']].map(
+    [['pipeline', 'Pipeline'], ['pilot', 'Pilot'], ['customer', 'Customer'], ['backburner', 'Back burner']].map(
       ([id, label]) => el('button', {
         class: 'btn ' + (id === currentTrack ? 'btn-accent' : 'btn-ghost'),
         text: label, onClick: () => moveTrack(id),
@@ -1836,6 +1875,43 @@ function renderPilot(root, ctx) {
 }
 
 
+/* ===== js/views/customers.js ===== */
+
+/* The Customers board: live paying customers, grouped by billing cadence
+   (Monthly / Annual) plus a Churned column. Mirrors the Pilot board. "Customer
+   value" sums annual contract value across the active (non-churned) columns. */
+function renderCustomers(root, ctx) {
+  stopDragScroll(); // clear any loop left over from a re-render mid-drag
+  const today = todayStr();
+  const deals = ctx.store.list('deals').filter(d => d.track === 'customer');
+  const active = deals.filter(d => d.stage !== 'churned');
+  const total = active.reduce((n, d) => n + (d.value || 0), 0);
+
+  root.append(
+    el('h1', { text: 'Customers' }),
+    el('div', { class: 'metrics' }, [
+      el('div', {}, [
+        el('div', { class: 'metric-label', text: 'Active customers' }),
+        el('div', { class: 'metric-value', text: String(active.length) }),
+      ]),
+      el('div', {}, [
+        el('div', { class: 'metric-label', text: 'Customer value' }),
+        el('div', { class: 'metric-value', text: fmtMoney(total) }),
+      ]),
+    ]),
+    deals.length === 0
+      ? el('div', { class: 'empty', text: 'No customers yet. Open a deal and choose “Customer”, or drag a deal here once this board has cards.' })
+      : null,
+    el('div', { class: 'board' },
+      CUSTOMER_STAGES.map(stage =>
+        stageColumn(ctx, {
+          stage, today, track: 'customer',
+          deals: deals.filter(d => d.stage === stage.id),
+        }))),
+  );
+}
+
+
 /* ===== js/views/learnings.js ===== */
 
 /* The Learnings tab has two lenses on the same data:
@@ -2312,6 +2388,7 @@ function openBrainDump(ctx) {
     status.textContent = 'Thinking…';
     try {
       const result = await invokeFunction('braindump', { text, snapshot: buildSnapshot(ctx) });
+      ctx.refreshAiCost?.(); // the dump just spent tokens — refresh the meter
       showPreview(result);
     } catch (e) {
       status.className = 'signin-msg err';
@@ -2372,6 +2449,7 @@ const ROUTES = {
   today: renderToday,
   pipeline: renderPipeline,
   pilot: renderPilot,
+  customers: renderCustomers,
   accounts: renderAccounts,
   account: renderAccountDetail,
   learnings: renderLearnings,
@@ -2379,8 +2457,18 @@ const ROUTES = {
 
 function boot() {
   const store = createRemoteStore();
-  const ctx = { store, route };
+  const ctx = { store, route, refreshAiCost: updateAiCost };
   const viewRoot = document.getElementById('view-root');
+
+  // Top-bar AI cost meter: this month's estimated Claude spend for the CRM.
+  async function updateAiCost() {
+    const slot = document.getElementById('ai-cost');
+    if (!slot) return;
+    try {
+      const { costUsd } = await fetchMonthlyAiCost();
+      slot.textContent = `AI ~$${costUsd < 0.01 ? costUsd.toFixed(3) : costUsd.toFixed(2)}/mo`;
+    } catch { slot.textContent = ''; }
+  }
 
   const signInEl = buildSignIn();
   document.body.appendChild(signInEl);
@@ -2422,6 +2510,7 @@ function boot() {
     }
     if (!mounted) { mountQuickAdd(ctx); mountSearch(ctx); mountBrainDump(ctx); mounted = true; }
     render();
+    updateAiCost();
   }
 
   function showSignIn() {
