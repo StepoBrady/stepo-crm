@@ -825,8 +825,9 @@ function safeHref(url) {
 function fmtMoney(n) {
   const value = Number(n) || 0;
   const abs = Math.abs(value);
-  if (abs >= 1000000) {
+  if (abs >= 999500) {
     // $1M+ switches to millions, one decimal, trailing .0 dropped ($1M, $1.5M).
+    // Threshold is just under 1M so nothing ever renders the awkward "$1000k".
     const m = Math.round((value / 1000000) * 10) / 10;
     return '$' + m + 'M';
   }
