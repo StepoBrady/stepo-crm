@@ -476,11 +476,11 @@ const STAGE_IDS = STAGES.map(s => s.id);
 const TRACKS = ['pipeline', 'pilot', 'customer', 'backburner'];
 
 const PILOT_STAGES = [
+  { id: 'negotiation', label: 'In negotiations', probability: 0.65 },
   { id: 'kickoff',     label: 'Kickoff',         probability: 0.70 },
   { id: 'onboarding',  label: 'Onboarding',      probability: 0.78 },
   { id: 'active',      label: 'Active',          probability: 0.85 },
   { id: 'evaluation',  label: 'Evaluation',      probability: 0.90 },
-  { id: 'negotiation', label: 'In negotiations', probability: 0.92 },
   { id: 'converting',  label: 'Converting',      probability: 0.95 },
 ];
 const PILOT_STAGE_IDS = PILOT_STAGES.map(s => s.id);
