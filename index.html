@@ -410,6 +410,10 @@ textarea { min-height: 80px; resize: vertical; }
 .health-age { color: var(--ink-dim); font-size: 12px; width: 72px; text-align: right; flex: 0 0 auto; }
 
 @media (max-width: 820px) { .dash-cols { grid-template-columns: 1fr; } }
+
+/* Inline contact editor (account detail). */
+.contact-edit { display: flex; flex-direction: column; gap: 6px; }
+.contact-edit > input { width: 100%; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
@@ -1711,12 +1715,61 @@ function learningBlock(ctx, account) {
   ]);
 }
 
+/* One contact row that toggles between a display view and an inline editor,
+   so contacts can be corrected in place (not just removed and re-added). */
+function contactRow(ctx, c, allInteractions) {
+  const row = el('div', { class: 'row' });
+
+  const showDisplay = () => {
+    const st = contactEmailStatus(allInteractions, c.id);
+    row.replaceChildren(
+      el('div', { class: 'grow' }, [
+        el('strong', { text: c.name }),
+        el('div', { class: 'muted', text: [c.title, c.email, c.phone].filter(Boolean).join(' · ') || 'No details' }),
+      ]),
+      st ? el('span', {
+        class: 'chip ' + (st.state === 'awaiting_you' ? 'owe' : ''),
+        text: (st.state === 'awaiting_you' ? 'You owe a reply · ' : 'Awaiting them · ') + fmtDate(st.since),
+      }) : null,
+      el('button', { class: 'btn btn-ghost', text: 'Edit', onClick: showEdit }),
+      el('button', { class: 'btn btn-ghost btn-danger', text: 'Remove', onClick: () => ctx.store.remove('contacts', c.id) }),
+    );
+  };
+
+  function showEdit() {
+    const name = el('input', { value: c.name || '', placeholder: 'Name' });
+    const title = el('input', { value: c.title || '', placeholder: 'Title' });
+    const email = el('input', { value: c.email || '', placeholder: 'Email' });
+    const phone = el('input', { value: c.phone || '', placeholder: 'Phone' });
+    const saveEdit = () => {
+      if (!name.value.trim()) return;
+      const changes = { name: name.value.trim(), title: title.value.trim(), email: email.value.trim(), phone: phone.value.trim() };
+      ctx.store.update('contacts', c.id, changes);
+      Object.assign(c, changes); // reflect immediately, independent of re-render timing
+      showDisplay();
+    };
+    row.replaceChildren(
+      el('div', { class: 'grow contact-edit' }, [
+        name,
+        el('div', { class: 'field-row' }, [title, email, phone]),
+      ]),
+      el('button', { class: 'btn btn-accent', text: 'Save', onClick: saveEdit }),
+      el('button', { class: 'btn btn-ghost', text: 'Cancel', onClick: showDisplay }),
+    );
+    name.focus();
+  }
+
+  showDisplay();
+  return row;
+}
+
 function contactBlock(ctx, account) {
   const contacts = ctx.store.list('contacts').filter(c => c.accountId === account.id);
   const allInteractions = ctx.store.list('interactions');
   const name = el('input', { placeholder: 'Name' });
   const title = el('input', { placeholder: 'Title' });
   const email = el('input', { placeholder: 'Email' });
+  const phone = el('input', { placeholder: 'Phone' });
 
   return el('section', { class: 'section' }, [
     el('div', { class: 'section-head' }, [
@@ -1724,33 +1777,17 @@ function contactBlock(ctx, account) {
       el('span', { class: 'count', text: String(contacts.length) }),
     ]),
     ...(contacts.length
-      ? contacts.map(c => {
-          const st = contactEmailStatus(allInteractions, c.id);
-          return el('div', { class: 'row' }, [
-            el('div', { class: 'grow' }, [
-              el('strong', { text: c.name }),
-              el('div', { class: 'muted', text: [c.title, c.email, c.phone].filter(Boolean).join(' · ') }),
-            ]),
-            st ? el('span', {
-              class: 'chip ' + (st.state === 'awaiting_you' ? 'owe' : ''),
-              text: (st.state === 'awaiting_you' ? 'You owe a reply · ' : 'Awaiting them · ') + fmtDate(st.since),
-            }) : null,
-            el('button', {
-              class: 'btn btn-ghost btn-danger', text: 'Remove',
-              onClick: () => ctx.store.remove('contacts', c.id),
-            }),
-          ]);
-        })
+      ? contacts.map(c => contactRow(ctx, c, allInteractions))
       : [el('div', { class: 'empty', text: 'No contacts yet.' })]),
     el('div', { class: 'field-row', style: 'margin-top:8px' }, [
-      name, title, email,
+      name, title, email, phone,
       el('button', {
         class: 'btn', text: 'Add',
         onClick: () => {
           if (!name.value.trim()) return;
           ctx.store.add('contacts', {
             accountId: account.id, name: name.value.trim(),
-            title: title.value.trim(), email: email.value.trim(),
+            title: title.value.trim(), email: email.value.trim(), phone: phone.value.trim(),
           });
         },
       }),
@@ -2186,7 +2223,10 @@ function renderCustomers(root, ctx) {
   const today = todayStr();
   const deals = ctx.store.list('deals').filter(d => d.track === 'customer');
   const active = deals.filter(d => d.stage !== 'churned');
-  const total = active.reduce((n, d) => n + (d.value || 0), 0);
+  // Monthly-cadence customers store a monthly value; annual-cadence store an
+  // annual value. Normalize everything to MRR, then ARR = MRR × 12.
+  const mrr = active.reduce((n, d) => n + (d.stage === 'monthly' ? (d.value || 0) : (d.value || 0) / 12), 0);
+  const arr = mrr * 12;
 
   root.append(
     el('h1', { text: 'Customers' }),
@@ -2196,8 +2236,12 @@ function renderCustomers(root, ctx) {
         el('div', { class: 'metric-value', text: String(active.length) }),
       ]),
       el('div', {}, [
-        el('div', { class: 'metric-label', text: 'Customer value' }),
-        el('div', { class: 'metric-value', text: fmtMoney(total) }),
+        el('div', { class: 'metric-label', text: 'Projected MRR' }),
+        el('div', { class: 'metric-value', text: fmtMoney(Math.round(mrr)) }),
+      ]),
+      el('div', {}, [
+        el('div', { class: 'metric-label', text: 'Projected ARR' }),
+        el('div', { class: 'metric-value', text: fmtMoney(Math.round(arr)) }),
       ]),
     ]),
     ...(deals.length === 0
@@ -2238,7 +2282,7 @@ function renderDashboard(root, ctx) {
     ['Open pipeline', fmtMoney(openPipelineValue(pipelineOpen)), `${pipelineOpen.length} open deals`],
     ['Weighted forecast', fmtMoney(weightedForecast(pipelineOpen)), 'probability-adjusted'],
     ['Active pilots', String(pilots.length), fmtMoney(pilots.reduce((n, d) => n + (d.value || 0), 0)) + ' in trial'],
-    ['Customers', String(custActive.length), fmtMoney(custActive.reduce((n, d) => n + (d.value || 0), 0)) + ' / yr'],
+    ['Customers', String(custActive.length), fmtMoney(Math.round(custActive.reduce((n, d) => n + (d.stage === 'monthly' ? (d.value || 0) * 12 : (d.value || 0)), 0))) + ' ARR'],
     ['Accounts', String(accounts.length), `${accounts.filter(a => (a.status || 'active') === 'active').length} active`],
     ['Contacts', String(contacts.length), 'people tracked'],
   ];
