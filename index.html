@@ -1061,6 +1061,87 @@ function clearUserChip() {
 }
 
 
+/* ===== js/views/complete-action.js ===== */
+
+/* Complete a deal's current next action and (optionally) roll it forward:
+   logs the finished action to the timeline as activity, then either sets a new
+   next action from the note + follow-up date, or clears it if none is given.
+   Names are globally unique — the bundler flattens all modules into one scope. */
+let completeActionKeyHandler = null;
+
+function closeCompleteAction() {
+  if (completeActionKeyHandler) {
+    window.removeEventListener('keydown', completeActionKeyHandler);
+    completeActionKeyHandler = null;
+  }
+  clear(document.getElementById('overlay-root'));
+}
+registerOverlayCloser(closeCompleteAction);
+
+function openCompleteAction(ctx, deal) {
+  const root = document.getElementById('overlay-root');
+  closeAllOverlays();
+
+  const account = ctx.store.get('accounts', deal.accountId);
+  const oldText = deal.nextAction ? deal.nextAction.text : '';
+
+  const nextStep = el('textarea', {
+    placeholder: 'What\'s the next step? (leave blank to just close this out)',
+    style: 'min-height:70px',
+  });
+  const followDate = el('input', { type: 'date' });
+
+  function complete() {
+    // 1) Record the completion on the timeline — this also counts as a touch,
+    //    so the account stops looking cold.
+    ctx.store.add('interactions', {
+      accountId: deal.accountId,
+      dealId: deal.id,
+      date: todayStr(),
+      type: 'note',
+      summary: '✓ Done: ' + (oldText || deal.name),
+      notes: nextStep.value.trim() ? 'Next: ' + nextStep.value.trim() : '',
+    });
+    // 2) Roll forward to a new next action, or clear it.
+    if (followDate.value) {
+      ctx.store.update('deals', deal.id, {
+        nextAction: { text: nextStep.value.trim() || 'Follow up', dueDate: followDate.value },
+      });
+    } else {
+      ctx.store.update('deals', deal.id, { nextAction: null });
+    }
+    closeCompleteAction();
+  }
+
+  const modal = el('div', { class: 'modal' }, [
+    el('div', { class: 'section-head' }, [
+      el('h2', { text: 'Complete follow-up' }),
+      el('button', { class: 'btn btn-ghost', text: 'Close', style: 'margin-left:auto', onClick: closeCompleteAction }),
+    ]),
+    el('div', { class: 'muted', text: (account ? account.name + ' · ' : '') + deal.name }),
+    oldText
+      ? el('div', { class: 'card', style: 'margin:10px 0' }, ['✓ ' + oldText])
+      : el('div', { class: 'muted', style: 'margin:10px 0', text: 'No action was set — you can add the next one below.' }),
+    el('label', { text: 'Next step / note' }), nextStep,
+    el('label', { text: 'Follow up on' }), followDate,
+    el('div', { class: 'muted', text: 'Set a date and it becomes the new next action. Leave the date blank to just mark this done.' }),
+    el('div', { class: 'actions' }, [
+      el('button', { class: 'btn btn-accent', text: 'Complete', onClick: complete }),
+      el('button', { class: 'btn btn-ghost', text: 'Cancel', onClick: closeCompleteAction }),
+    ]),
+  ]);
+
+  root.append(el('div', { class: 'scrim', onClick: closeCompleteAction }), modal);
+  nextStep.focus();
+
+  completeActionKeyHandler = e => {
+    if (e.key === 'Escape') closeCompleteAction();
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) complete();
+  };
+  window.addEventListener('keydown', completeActionKeyHandler);
+}
+
+
 /* ===== js/views/deal-detail.js ===== */
 
 /* Module-scoped so close can always unbind, whichever path closed the drawer.
@@ -1219,6 +1300,10 @@ function openDealDrawer(ctx, dealId) {
 
     el('label', { text: 'Next action' }), actionText,
     el('label', { text: 'Due' }), actionDue,
+    el('button', {
+      class: 'btn', text: '✓ Complete follow-up', style: 'margin-top:8px',
+      onClick: () => openCompleteAction(ctx, deal),
+    }),
 
     el('div', { class: 'actions' }, [
       el('button', { class: 'btn btn-accent', text: 'Save', onClick: save }),
@@ -1864,6 +1949,10 @@ function dealRow(ctx, deal, bucket) {
           text: fmtDate(deal.nextAction.dueDate),
         })
       : null,
+    el('button', {
+      class: 'btn btn-accent', text: '✓ Done',
+      onClick: () => openCompleteAction(ctx, deal),
+    }),
     el('button', {
       class: 'btn', text: 'Log',
       onClick: () => openLogFor(ctx, deal),
