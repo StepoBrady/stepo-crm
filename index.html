@@ -64,7 +64,7 @@ h1, h2, h3, .brand, .stage-head, .metric-value {
 .brand { font-size: 26px; letter-spacing: 0.04em; color: var(--ink); text-decoration: none; cursor: pointer; }
 .brand:hover { opacity: 0.85; }
 .brand .accent { color: var(--accent-text); }
-.nav { display: flex; gap: 4px; margin-left: 16px; }
+.nav { display: flex; flex-wrap: wrap; gap: 4px; margin-left: 16px; }
 .nav a {
   color: var(--ink-dim); text-decoration: none; padding: 6px 12px;
   border-radius: var(--radius); font-weight: 600;
@@ -271,7 +271,7 @@ main[data-route="learnings"] > .section { margin-bottom: 0; }
 .notes-body { white-space: pre-wrap; color: var(--ink-dim); font-size: 13px; margin-top: 6px;
               border-left: 2px solid var(--line); padding-left: 10px; }
 
-.metrics { display: flex; gap: 28px; margin-bottom: 18px; }
+.metrics { display: flex; flex-wrap: wrap; gap: 28px; margin-bottom: 18px; }
 .metric-label { color: var(--ink-dim); font-size: 11px; text-transform: uppercase; }
 .metric-value { font-size: 30px; color: var(--accent-text); }
 
@@ -361,12 +361,28 @@ textarea { min-height: 80px; resize: vertical; }
 
 @media (max-width: 720px) {
   main { padding: 16px; }
-  .topbar { flex-wrap: wrap; }
+  .topbar { flex-wrap: wrap; gap: 8px; padding: 10px 14px; }
   .nav { margin-left: 0; width: 100%; order: 3; }
+  .nav a { padding: 6px 10px; }
+  .topbar-right { gap: 6px; }
   .metrics { gap: 16px; }
   .board { flex-direction: column; }
   .column { flex: 1 1 auto; width: 100%; }
   .card-grid { grid-template-columns: 1fr; }
+  .field-row { flex-wrap: wrap; }
+}
+
+/* Small phones (iPhone SE/12/13/14 widths). Nothing should scroll sideways. */
+@media (max-width: 480px) {
+  main { padding: 12px; }
+  .brand { font-size: 22px; }
+  .kpi-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .kpi-value { font-size: 24px; }
+  .metric-value { font-size: 26px; }
+  .stage-bar-label { width: 64px; font-size: 11px; }
+  .stage-bar-val { width: 86px; font-size: 11px; }
+  .attr-field select { min-width: 0; }
+  .designer-frame { height: calc(100vh - 96px); }
 }
 
 /* ── Dashboard (landing) ─────────────────────────────────────────────── */
