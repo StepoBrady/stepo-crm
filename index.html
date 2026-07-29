@@ -2689,14 +2689,21 @@ function buildTheme(root, ctx, learnings) {
 const STUDIO_URL = 'https://stepobrady.github.io/stepo-studio/';
 
 function renderDesigner(root, ctx) {
-  root.append(
-    el('iframe', {
-      class: 'designer-frame',
-      src: STUDIO_URL,
-      title: 'StepoAI Studio',
-      allow: 'clipboard-write; clipboard-read',
-    }),
-  );
+  const frame = el('iframe', {
+    class: 'designer-frame',
+    src: STUDIO_URL,
+    title: 'StepoAI Studio',
+    allow: 'clipboard-write; clipboard-read',
+  });
+  // The Studio fits its preview to the available height on load + on resize.
+  // Inside this iframe that first fit runs before the frame has its real
+  // height and nothing re-fires, so the preview renders clipped. Same origin
+  // lets us poke the frame to re-fit once it has settled.
+  frame.addEventListener('load', () => {
+    const refit = () => { try { frame.contentWindow.dispatchEvent(new Event('resize')); } catch (_) { /* cross-origin guard */ } };
+    [50, 300, 800, 1600].forEach(ms => setTimeout(refit, ms));
+  });
+  root.append(frame);
 }
 
 
