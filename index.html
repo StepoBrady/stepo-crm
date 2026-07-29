@@ -440,6 +440,9 @@ main[data-route="designer"] { padding: 0; max-width: none; }
 .onboard-check { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--ink-dim); }
 .onboard-check input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent-text); }
 .onboard-check input[type="date"] { max-width: 170px; }
+
+/* Onboarded-user count on a deal card. */
+.deal-card .onboard-count { font-size: 11px; color: var(--accent-text); margin-top: 2px; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
@@ -1431,6 +1434,9 @@ function dealCard(ctx, deal, today) {
   const account = ctx.store.get('accounts', deal.accountId);
   const contact = deal.primaryContactId ? ctx.store.get('contacts', deal.primaryContactId) : null;
   const hasLearning = ctx.store.list('learnings').some(l => l.accountId === deal.accountId);
+  const onboardedCount = account
+    ? ctx.store.list('contacts').filter(c => c.accountId === account.id && c.onboarded).length
+    : 0;
   const due = deal.nextAction ? deal.nextAction.dueDate : null;
   const bucket = dueBucket(due, today);
 
@@ -1441,6 +1447,7 @@ function dealCard(ctx, deal, today) {
     el('div', { class: 'name', text: (hasLearning ? '💡 ' : '') + deal.name }),
     contact ? el('div', { class: 'contact', text: '👤 ' + contact.name }) : null,
     el('div', { class: 'acct', text: account ? account.name : 'No account' }),
+    onboardedCount ? el('div', { class: 'onboard-count', text: `👥 ${onboardedCount} onboarded` }) : null,
     el('div', { class: 'val', text: fmtMoney(deal.value) }),
     due
       ? el('div', {
@@ -1818,10 +1825,12 @@ function contactBlock(ctx, account) {
   const email = el('input', { placeholder: 'Email' });
   const phone = el('input', { placeholder: 'Phone' });
 
+  const onboardedN = contacts.filter(c => c.onboarded).length;
   return el('section', { class: 'section' }, [
     el('div', { class: 'section-head' }, [
       el('h2', { text: 'Contacts' }),
       el('span', { class: 'count', text: String(contacts.length) }),
+      onboardedN ? el('span', { class: 'chip onboarded', text: `${onboardedN} onboarded` }) : null,
     ]),
     ...(contacts.length
       ? contacts.map(c => contactRow(ctx, c, allInteractions))
