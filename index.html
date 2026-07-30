@@ -2060,8 +2060,9 @@ function dealRow(ctx, deal, bucket) {
     el('button', {
       class: 'btn btn-ghost', text: 'Snooze 7d',
       onClick: () => {
-        const base = (deal.nextAction && deal.nextAction.dueDate) || todayStr();
-        const [y, m, d] = base.split('-').map(Number);
+        // Snooze means "come back to me in a week" — always 7 days from TODAY,
+        // never from an already-past due date (or an overdue item wouldn't move).
+        const [y, m, d] = todayStr().split('-').map(Number);
         const next = new Date(Date.UTC(y, m - 1, d + 7)).toISOString().slice(0, 10);
         ctx.store.update('deals', deal.id, {
           nextAction: { text: deal.nextAction ? deal.nextAction.text : 'Follow up', dueDate: next },
