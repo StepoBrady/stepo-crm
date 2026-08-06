@@ -255,6 +255,13 @@ main[data-route="learnings"] > .section { margin-bottom: 0; }
 .chip.cold { background: var(--warn); color: var(--on-accent); }
 .chip.calendar { background: transparent; color: var(--ink-dim); border: 1px solid var(--line); }
 .chip.owe { background: var(--danger); color: #fff; }
+/* Click-to-edit due date: the native date input covers the chip invisibly so a
+   tap lands on it (mobile opens the picker on focus; desktop via showPicker). */
+.chip-date { cursor: pointer; position: relative; }
+.chip-date .chip-date-input {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; border: 0; padding: 0; margin: 0; cursor: pointer;
+}
 /* Theme chips carry their color via an inline --chip. Dark: colored text on a
    neutral pill. Light: colored text on white washes out (esp. lime/amber), so
    fill the pill with the color and use dark text (see the light-theme block). */
@@ -2029,6 +2036,26 @@ function openLogFor(ctx, deal) {
   }));
 }
 
+// The due-date chip is a click-to-open calendar: the native date input rides
+// invisibly on top of the chip, so tapping it opens the browser's picker and
+// picking a date reshuffles the deal into the right bucket.
+function dueDateChip(ctx, deal, bucket) {
+  const input = el('input', { type: 'date', class: 'chip-date-input', title: 'Change due date' });
+  input.value = deal.nextAction.dueDate;
+  input.addEventListener('click', () => {
+    try { input.showPicker(); } catch (_) { /* older browsers: focus alone opens it */ }
+  });
+  input.addEventListener('change', () => {
+    if (!input.value) return;
+    ctx.store.update('deals', deal.id, {
+      nextAction: { text: deal.nextAction.text || 'Follow up', dueDate: input.value },
+    });
+  });
+  return el('span', {
+    class: 'chip chip-date ' + (bucket === 'overdue' ? 'overdue' : bucket === 'today' ? 'today' : ''),
+  }, [el('span', { text: fmtDate(deal.nextAction.dueDate) }), input]);
+}
+
 function dealRow(ctx, deal, bucket) {
   const account = ctx.store.get('accounts', deal.accountId);
   const stage = stageById(deal.stage);
@@ -2043,12 +2070,7 @@ function dealRow(ctx, deal, bucket) {
     ]),
     el('span', { class: 'chip', text: stage ? stage.label : deal.stage }),
     el('span', { class: 'chip', text: fmtMoney(deal.value) }),
-    deal.nextAction && deal.nextAction.dueDate
-      ? el('span', {
-          class: 'chip ' + (bucket === 'overdue' ? 'overdue' : bucket === 'today' ? 'today' : ''),
-          text: fmtDate(deal.nextAction.dueDate),
-        })
-      : null,
+    deal.nextAction && deal.nextAction.dueDate ? dueDateChip(ctx, deal, bucket) : null,
     el('button', {
       class: 'btn btn-accent', text: '✓ Done',
       onClick: () => openCompleteAction(ctx, deal),
