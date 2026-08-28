@@ -255,6 +255,14 @@ main[data-route="learnings"] > .section { margin-bottom: 0; }
 .chip.cold { background: var(--warn); color: var(--on-accent); }
 .chip.calendar { background: transparent; color: var(--ink-dim); border: 1px solid var(--line); }
 .chip.owe { background: var(--danger); color: #fff; }
+/* Meeting playbook rows: numbered run-of-show with tick-off checkboxes. */
+.play-row { cursor: pointer; align-items: flex-start; }
+.play-row .sel { margin-top: 4px; }
+.play-num { font-weight: 700; color: var(--accent-text, var(--accent)); min-width: 26px; padding-top: 1px; }
+.play-title { font-weight: 700; }
+.play-done .play-title { text-decoration: line-through; opacity: .55; }
+.play-done .muted { opacity: .5; }
+
 /* Click-to-edit due date: the native date input covers the chip invisibly so a
    tap lands on it (mobile opens the picker on focus; desktop via showPicker). */
 .chip-date { cursor: pointer; position: relative; }
@@ -464,6 +472,7 @@ main[data-route="designer"] { padding: 0; max-width: none; }
       <a href="#/customers" data-route="customers">Customers</a>
       <a href="#/accounts" data-route="accounts">Accounts</a>
       <a href="#/learnings" data-route="learnings">Learnings</a>
+      <a href="#/playbook" data-route="playbook">Playbook</a>
       <a href="#/designer" data-route="designer">Designer</a>
       <a href="#/settings" data-route="settings">Settings</a>
     </nav>
@@ -2015,7 +2024,7 @@ function renderAccountDetail(root, ctx, accountId) {
     editor,
     ...notesBlock,
     el('div', { class: 'detail-cols' }, [
-      el('div', {}, [dealBlock(ctx, account), learningBlock(ctx, account), contactBlock(ctx, account)]),
+      el('div', {}, [playbookChecklist(ctx, account), dealBlock(ctx, account), learningBlock(ctx, account), contactBlock(ctx, account)]),
       el('div', {}, [timelineBlock(ctx, account)]),
     ]),
   );
@@ -2704,6 +2713,75 @@ function buildTheme(root, ctx, learnings) {
 }
 
 
+/* ===== js/views/playbook.js ===== */
+
+/* The meeting playbook: Brady's run of show for initial sales meetings.
+   The Playbook tab is the reference copy; the real ticking happens on each
+   account (playbookChecklist below), saved to the account's `playbook` jsonb
+   so it syncs across users and devices. Edit the plays here + redeploy. */
+
+const PLAYS = [
+  ['intro', 'Quick intro', 'A couple of minutes on who we are, then hand them the floor.'],
+  ['imagine', 'Ask the imagination question', 'Set the frame before any product talk. Get them picturing the end state.'],
+  ['listen', 'Let them talk and complain', 'The pain does the selling. Do not interrupt. Take notes in their words.'],
+  ['priorities', 'Get the top three priorities, twice', 'Their personal top three, then the organization’s top three. Write both down.'],
+  ['procurement', 'Bring up their procurement process', 'How buying works: IT review, budget if the moment fits, timeline. Listen for who the real decision maker is without asking directly.'],
+  ['slides', 'Slides specific to their needs', 'Show only what maps to what they just said. Skip the rest of the deck.'],
+  ['demo', 'Do not demo early', 'The demo only comes after the priorities are on the table.'],
+  ['next', 'Set the next meeting before you end', 'Never leave without a date and an owner for the next step.'],
+];
+
+/* Per-account checklist card, rendered on the account detail page. Ticks live
+   in account.playbook ({playId: true}) and sync like any other account field. */
+function playbookChecklist(ctx, account) {
+  const ticks = account.playbook || {};
+  const doneCount = PLAYS.filter(([id]) => ticks[id]).length;
+  return el('section', { class: 'section' }, [
+    el('div', { class: 'section-head' }, [
+      el('h2', { text: '📋 Meeting checklist' }),
+      el('span', { class: 'count', text: `${doneCount}/${PLAYS.length}` }),
+      doneCount > 0 ? el('button', {
+        class: 'btn btn-ghost', text: 'Reset', style: 'margin-left:auto',
+        onClick: () => ctx.store.update('accounts', account.id, { playbook: {} }),
+      }) : null,
+    ]),
+    ...PLAYS.map(([id, title, detail], i) => {
+      const cb = el('input', { type: 'checkbox', class: 'sel' });
+      cb.checked = !!ticks[id];
+      cb.addEventListener('change', () => {
+        const next = { ...(account.playbook || {}) };
+        if (cb.checked) next[id] = true; else delete next[id];
+        ctx.store.update('accounts', account.id, { playbook: next });
+      });
+      return el('label', { class: 'row play-row' + (ticks[id] ? ' play-done' : '') }, [
+        cb,
+        el('span', { class: 'play-num', text: String(i + 1).padStart(2, '0') }),
+        el('div', { class: 'grow' }, [
+          el('div', { class: 'play-title', text: title }),
+          el('div', { class: 'muted', text: detail }),
+        ]),
+      ]);
+    }),
+  ]);
+}
+
+/* The Playbook tab: the reference run of show. */
+function renderPlaybook(root) {
+  root.append(
+    el('h1', { text: 'Meeting playbook' }),
+    el('div', { class: 'muted', text: 'The run of show for initial meetings. Tick it off per account, on the account page.' }),
+    el('section', { class: 'section' }, PLAYS.map(([, title, detail], i) =>
+      el('div', { class: 'row play-row' }, [
+        el('span', { class: 'play-num', text: String(i + 1).padStart(2, '0') }),
+        el('div', { class: 'grow' }, [
+          el('div', { class: 'play-title', text: title }),
+          el('div', { class: 'muted', text: detail }),
+        ]),
+      ]))),
+  );
+}
+
+
 /* ===== js/views/designer.js ===== */
 
 /* The Designer tab embeds StepoAI Studio in-place. It's the same origin as the
@@ -3220,6 +3298,7 @@ const ROUTES = {
   accounts: renderAccounts,
   account: renderAccountDetail,
   learnings: renderLearnings,
+  playbook: renderPlaybook,
   designer: renderDesigner,
   settings: renderSettings,
 };
