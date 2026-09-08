@@ -255,6 +255,15 @@ main[data-route="learnings"] > .section { margin-bottom: 0; }
 .chip.cold { background: var(--warn); color: var(--on-accent); }
 .chip.calendar { background: transparent; color: var(--ink-dim); border: 1px solid var(--line); }
 .chip.owe { background: var(--danger); color: #fff; }
+/* Accounts grouped by market size: SMB / Midmarket / Enterprise headings. */
+.group-head {
+  display: flex; align-items: center; gap: 8px;
+  margin: 20px 0 6px; padding-bottom: 6px; border-bottom: 1px solid var(--line);
+  font-size: 12px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.group-head:first-child { margin-top: 0; }
+
 /* Meeting playbook rows: numbered run-of-show with tick-off checkboxes. */
 .play-row { cursor: pointer; align-items: flex-start; }
 .play-row .sel { margin-top: 4px; }
@@ -575,6 +584,15 @@ function segmentById(id) { return SEGMENTS.find(s => s.id === id); }
 const INDUSTRIES = SEGMENTS;
 const INDUSTRY_IDS = SEGMENT_IDS;
 function industryById(id) { return segmentById(id); }
+
+/* Company-size tiers ("market"), the second axis on accounts next to industry. */
+const MARKET_SIZES = [
+  { id: 'smb', label: 'SMB' },
+  { id: 'midmarket', label: 'Midmarket' },
+  { id: 'enterprise', label: 'Enterprise' },
+];
+const MARKET_SIZE_IDS = MARKET_SIZES.map(m => m.id);
+function marketSizeById(id) { return MARKET_SIZES.find(m => m.id === id) || null; }
 
 /* Learning themes double as the "overarching learnings" shown at the top of the
    Learnings tab; each per-account learning is tagged with one so specifics roll
@@ -1534,6 +1552,11 @@ function accountForm(ctx, account) {
   ]);
   const status = el('select', {}, ACCOUNT_STATUSES.map(s =>
     el('option', { value: s, text: s, ...(s === (values.status || 'active') ? { selected: 'selected' } : {}) })));
+  const market = el('select', {}, [
+    el('option', { value: '', text: '— market —' }),
+    ...MARKET_SIZES.map(m =>
+      el('option', { value: m.id, text: m.label, ...(m.id === values.marketSize ? { selected: 'selected' } : {}) })),
+  ]);
   const website = el('input', { value: values.website, placeholder: 'https://' });
   const notes = el('textarea', { text: values.notes });
 
@@ -1541,6 +1564,7 @@ function accountForm(ctx, account) {
     el('label', { text: 'Name' }), name,
     el('div', { class: 'field-row' }, [
       el('div', {}, [el('label', { text: 'Industry' }), industry]),
+      el('div', {}, [el('label', { text: 'Market' }), market]),
       el('div', {}, [el('label', { text: 'Status' }), status]),
     ]),
     el('label', { text: 'Website' }), website,
@@ -1554,8 +1578,17 @@ function accountForm(ctx, account) {
             name: name.value.trim(), industry: industry.value || null,
             status: status.value, website: website.value.trim(), notes: notes.value,
           };
-          if (account) ctx.store.update('accounts', account.id, fields);
-          else ctx.route('account', ctx.store.add('accounts', fields).id);
+          // marketSize lives outside the factory whitelist and rides through
+          // update() only, and only when there's a value to set or clear — so
+          // nothing breaks if the market_size column migration hasn't run yet.
+          if (account) {
+            if (market.value || account.marketSize) fields.marketSize = market.value || null;
+            ctx.store.update('accounts', account.id, fields);
+          } else {
+            const rec = ctx.store.add('accounts', fields);
+            if (market.value) ctx.store.update('accounts', rec.id, { marketSize: market.value });
+            ctx.route('account', rec.id);
+          }
         },
       }),
     ]),
@@ -1605,6 +1638,7 @@ function renderAccounts(root, ctx) {
 
   const count = el('span', { class: 'muted' });
   const bulkIndustrySel = el('select', {}, INDUSTRIES.map(i => el('option', { value: i.id, text: i.label })));
+  const bulkMarketSel = el('select', {}, MARKET_SIZES.map(m => el('option', { value: m.id, text: m.label })));
   const bulkStatusSel = el('select', {}, ACCOUNT_STATUSES.map(s => el('option', { value: s, text: s })));
   const bulkSet = (field, valEl) => () => {
     for (const id of [...selected]) ctx.store.update('accounts', id, { [field]: valEl.value });
@@ -1613,6 +1647,7 @@ function renderAccounts(root, ctx) {
     count,
     el('span', { class: 'grow' }),
     bulkIndustrySel, el('button', { class: 'btn', text: 'Set industry', onClick: bulkSet('industry', bulkIndustrySel) }),
+    bulkMarketSel, el('button', { class: 'btn', text: 'Set market', onClick: bulkSet('marketSize', bulkMarketSel) }),
     bulkStatusSel, el('button', { class: 'btn', text: 'Set status', onClick: bulkSet('status', bulkStatusSel) }),
     el('button', {
       class: 'btn btn-danger', text: 'Delete',
@@ -1652,8 +1687,7 @@ function renderAccounts(root, ctx) {
       .filter(a => !q || a.name.toLowerCase().includes(q))
       .sort((a, b) => a.name.localeCompare(b.name));
 
-    list.replaceChildren(...(shown.length
-      ? shown.map(a => {
+    const rowFor = a => {
           const mine = deals.filter(d => d.accountId === a.id);
           const dead = (a.status || 'active') === 'dead';
           const cb = el('input', { type: 'checkbox', class: 'sel' });
@@ -1675,7 +1709,21 @@ function renderAccounts(root, ctx) {
             el('span', { class: 'chip', text: `${mine.length} deal${mine.length === 1 ? '' : 's'}` }),
             el('span', { class: 'chip', text: fmtMoney(openPipelineValue(mine)) }),
           ]);
-        })
+        };
+
+    // Separate by market: SMB / Midmarket / Enterprise sections, unsized last.
+    const groups = [...MARKET_SIZES.map(m => [m.id, m.label]), [null, 'Unsized']];
+    const nodes = [];
+    for (const [gid, glabel] of groups) {
+      const members = shown.filter(a => (a.marketSize || null) === gid);
+      if (!members.length) continue;
+      nodes.push(el('div', { class: 'group-head' }, [
+        el('span', { text: glabel }),
+        el('span', { class: 'count', text: String(members.length) }),
+      ]));
+      nodes.push(...members.map(rowFor));
+    }
+    list.replaceChildren(...(nodes.length ? nodes
       : [el('div', { class: 'empty', text: 'No accounts match these filters.' })]));
   }
 
@@ -1975,14 +2023,23 @@ function renderAccountDetail(root, ctx, accountId) {
     ...INDUSTRIES.map(i => el('option', { value: i.id, text: i.label, ...(i.id === account.industry ? { selected: 'selected' } : {}) })),
   ]);
   const attrStatus = el('select', {}, ACCOUNT_STATUSES.map(s => el('option', { value: s, text: s, ...(s === (account.status || 'active') ? { selected: 'selected' } : {}) })));
+  const attrMarket = el('select', {}, [
+    el('option', { value: '', text: '— market —' }),
+    ...MARKET_SIZES.map(m => el('option', { value: m.id, text: m.label, ...(m.id === account.marketSize ? { selected: 'selected' } : {}) })),
+  ]);
   const attrBar = el('div', { class: 'attr-bar card' }, [
     el('div', { class: 'attr-field' }, [el('label', { text: 'Industry' }), attrIndustry]),
+    el('div', { class: 'attr-field' }, [el('label', { text: 'Market' }), attrMarket]),
     el('div', { class: 'attr-field' }, [el('label', { text: 'Status' }), attrStatus]),
     el('button', {
       class: 'btn btn-accent', text: 'Save',
-      onClick: () => ctx.store.update('accounts', account.id, {
-        industry: attrIndustry.value || null, status: attrStatus.value,
-      }),
+      onClick: () => {
+        const changes = { industry: attrIndustry.value || null, status: attrStatus.value };
+        // Only touch market_size when there's something to set or clear, so the
+        // save keeps working even before the column migration has run.
+        if (attrMarket.value || account.marketSize) changes.marketSize = attrMarket.value || null;
+        ctx.store.update('accounts', account.id, changes);
+      },
     }),
   ]);
 
@@ -1990,6 +2047,7 @@ function renderAccountDetail(root, ctx, accountId) {
     el('div', { class: 'section-head' }, [
       el('h1', { text: account.name }),
       account.industry ? el('span', { class: 'chip', text: industryById(account.industry)?.label || account.industry }) : null,
+      account.marketSize ? el('span', { class: 'chip', text: marketSizeById(account.marketSize)?.label || account.marketSize }) : null,
       (account.status || 'active') === 'dead' ? el('span', { class: 'chip dead-chip', text: 'dead' }) : null,
       safeHref(account.website)
         ? el('a', { href: safeHref(account.website), target: '_blank', rel: 'noopener', class: 'muted', text: account.website })
