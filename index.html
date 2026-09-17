@@ -264,6 +264,9 @@ main[data-route="learnings"] > .section { margin-bottom: 0; }
 }
 .group-head:first-child { margin-top: 0; }
 
+/* Shawmut commitment Q&A: answer boxes under each question. */
+.qa-note { margin-top: 8px; min-height: 48px; font-size: 13px; }
+
 /* Meeting playbook rows: numbered run-of-show with tick-off checkboxes. */
 .play-row { cursor: pointer; align-items: flex-start; }
 .play-row .sel { margin-top: 4px; }
@@ -482,6 +485,7 @@ main[data-route="designer"] { padding: 0; max-width: none; }
       <a href="#/accounts" data-route="accounts">Accounts</a>
       <a href="#/learnings" data-route="learnings">Learnings</a>
       <a href="#/playbook" data-route="playbook">Playbook</a>
+      <a href="#/shawmut" data-route="shawmut">Shawmut</a>
       <a href="#/designer" data-route="designer">Designer</a>
       <a href="#/settings" data-route="settings">Settings</a>
     </nav>
@@ -992,6 +996,18 @@ function fromRow(row) { const o = {}; for (const k in row) o[toCamelKey(k)] = ro
 
 const now = () => new Date().toISOString();
 
+/* Surface failed writes in the top bar instead of only console.error — a
+   silent persistence failure (e.g. a missing column migration) once went
+   unnoticed for weeks. */
+function flagSaveError(msg) {
+  const s = document.getElementById('sync-status');
+  if (s) { s.className = 'sync-status state-error'; s.textContent = 'save failed'; s.title = msg || ''; }
+}
+function flagSaveOk() {
+  const s = document.getElementById('sync-status');
+  if (s && s.classList.contains('state-error')) { s.className = 'sync-status'; s.textContent = ''; s.title = ''; }
+}
+
 function createRemoteStore() {
   let doc = { accounts: [], contacts: [], deals: [], interactions: [], learnings: [] };
   const listeners = new Set();
@@ -1047,7 +1063,7 @@ function createRemoteStore() {
       coll(name).push(rec);
       notify();
       supa.from(name).insert(toRow(rec)).then(({ error }) => {
-        if (error) { lastError = error.message; console.error('insert', name, error.message); }
+        if (error) { lastError = error.message; console.error('insert', name, error.message); flagSaveError(error.message); } else flagSaveOk();
       });
       return rec;
     },
@@ -1058,7 +1074,7 @@ function createRemoteStore() {
       Object.assign(rec, changes, { updatedAt: now() });
       notify();
       supa.from(name).update(toRow({ ...changes, updatedAt: rec.updatedAt })).eq('id', id).then(({ error }) => {
-        if (error) { lastError = error.message; console.error('update', name, error.message); }
+        if (error) { lastError = error.message; console.error('update', name, error.message); flagSaveError(error.message); } else flagSaveOk();
       });
       return rec;
     },
@@ -2840,6 +2856,95 @@ function renderPlaybook(root) {
 }
 
 
+/* ===== js/views/shawmut.js ===== */
+
+/* Shawmut commitment tab: the questions that reveal how much commitment and
+   investment they will actually put in, each with room to capture the answer.
+   Answers save to the Shawmut account's `diligence` jsonb ({qid: {done, note}})
+   so they sync across users and devices. Guarded writes: nothing else breaks
+   if the column migration hasn't run yet. */
+
+const QUESTIONS = [
+  ['timeline', 'Overall timeline', 'Pilot start, rollout milestones, decision dates.'],
+  ['announcement', 'Announcement', 'When we can go public and what we can say.'],
+  ['amount', 'Amount', 'Contract value, what it covers, and which budget it comes from.'],
+  ['needs', 'What do we need to get you where you need to be', 'Their exact asks of StepoAI, in their words.'],
+  ['hammertech', 'HammerTech replacement timeline', 'When they turn it off and what has to be true first.'],
+  ['vision', 'Full vision', 'What success looks like for them in 2 to 3 years.'],
+  ['scale', 'Scale of the commitment', 'Projects, sites and users in the pilot versus full rollout.'],
+  ['people', 'Who they put on it', 'Executive sponsor, champion, and the people on it day to day.'],
+  ['success', 'Success criteria', 'What the pilot must prove for them to expand.'],
+  ['procurement', 'Procurement path', 'IT and security review, legal, who signs, and how long each step takes.'],
+  ['codev', 'Co-development commitment', 'What they will build, test and give feedback on with us.'],
+  ['reference', 'Reference and case study', 'Will they be public proof: logo, quote, case study.'],
+];
+
+function findShawmut(ctx) {
+  return ctx.store.list('accounts').find(a => /shawmut/i.test(a.name)) || null;
+}
+
+function renderShawmut(root, ctx) {
+  const account = findShawmut(ctx);
+
+  if (!account) {
+    root.append(
+      el('h1', { text: 'Shawmut' }),
+      el('div', { class: 'card' }, [
+        el('div', { class: 'muted', text: 'No Shawmut account yet — create it to start capturing answers.' }),
+        el('div', { class: 'actions' }, [
+          el('button', {
+            class: 'btn btn-accent', text: '+ Create Shawmut account',
+            onClick: () => ctx.store.add('accounts', { name: 'Shawmut', industry: 'construction' }),
+          }),
+        ]),
+      ]),
+    );
+    return;
+  }
+
+  const qa = account.diligence || {};
+  const setQ = (id, patch) => {
+    const cur = account.diligence || {};
+    ctx.store.update('accounts', account.id, {
+      diligence: { ...cur, [id]: { ...(cur[id] || {}), ...patch } },
+    });
+  };
+  const answered = QUESTIONS.filter(([id]) => qa[id] && qa[id].done).length;
+
+  root.append(
+    el('div', { class: 'section-head' }, [
+      el('h1', { text: 'Shawmut' }),
+      el('span', { class: 'count', text: `${answered}/${QUESTIONS.length}` }),
+      el('button', {
+        class: 'btn btn-ghost', text: 'Open account', style: 'margin-left:auto',
+        onClick: () => ctx.route('account', account.id),
+      }),
+    ]),
+    el('div', { class: 'muted', text: 'What we need to know to understand the level of commitment and investment they will provide. Tick when answered; notes save as you go.' }),
+    el('section', { class: 'section' }, QUESTIONS.map(([id, title, hint], i) => {
+      const cur = qa[id] || {};
+      const cb = el('input', { type: 'checkbox', class: 'sel' });
+      cb.checked = !!cur.done;
+      cb.addEventListener('change', () => setQ(id, { done: cb.checked }));
+      const note = el('textarea', { class: 'qa-note', placeholder: 'Their answer…' });
+      note.value = cur.note || '';
+      note.addEventListener('change', () => { if (note.value !== (cur.note || '')) setQ(id, { note: note.value }); });
+      // Keep row-label clicks from toggling the checkbox while typing.
+      note.addEventListener('click', e => e.stopPropagation());
+      return el('label', { class: 'row play-row' + (cur.done ? ' play-done' : '') }, [
+        cb,
+        el('span', { class: 'play-num', text: String(i + 1).padStart(2, '0') }),
+        el('div', { class: 'grow' }, [
+          el('div', { class: 'play-title', text: title }),
+          el('div', { class: 'muted', text: hint }),
+          note,
+        ]),
+      ]);
+    })),
+  );
+}
+
+
 /* ===== js/views/designer.js ===== */
 
 /* The Designer tab embeds StepoAI Studio in-place. It's the same origin as the
@@ -3357,6 +3462,7 @@ const ROUTES = {
   account: renderAccountDetail,
   learnings: renderLearnings,
   playbook: renderPlaybook,
+  shawmut: renderShawmut,
   designer: renderDesigner,
   settings: renderSettings,
 };
