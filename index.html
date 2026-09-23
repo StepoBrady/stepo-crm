@@ -1594,12 +1594,13 @@ function accountForm(ctx, account) {
             name: name.value.trim(), industry: industry.value || null,
             status: status.value, website: website.value.trim(), notes: notes.value,
           };
-          // marketSize lives outside the factory whitelist and rides through
-          // update() only, and only when there's a value to set or clear — so
-          // nothing breaks if the market_size column migration hasn't run yet.
+          // marketSize always rides in its own update() — never bundled — so a
+          // missing column migration can't take the other fields down with it.
           if (account) {
-            if (market.value || account.marketSize) fields.marketSize = market.value || null;
             ctx.store.update('accounts', account.id, fields);
+            if (market.value || account.marketSize) {
+              ctx.store.update('accounts', account.id, { marketSize: market.value || null });
+            }
           } else {
             const rec = ctx.store.add('accounts', fields);
             if (market.value) ctx.store.update('accounts', rec.id, { marketSize: market.value });
@@ -2050,11 +2051,12 @@ function renderAccountDetail(root, ctx, accountId) {
     el('button', {
       class: 'btn btn-accent', text: 'Save',
       onClick: () => {
-        const changes = { industry: attrIndustry.value || null, status: attrStatus.value };
-        // Only touch market_size when there's something to set or clear, so the
-        // save keeps working even before the column migration has run.
-        if (attrMarket.value || account.marketSize) changes.marketSize = attrMarket.value || null;
-        ctx.store.update('accounts', account.id, changes);
+        // Two separate writes on purpose: market_size rides alone so a missing
+        // column migration can never take industry/status down with it.
+        ctx.store.update('accounts', account.id, { industry: attrIndustry.value || null, status: attrStatus.value });
+        if (attrMarket.value || account.marketSize) {
+          ctx.store.update('accounts', account.id, { marketSize: attrMarket.value || null });
+        }
       },
     }),
   ]);
