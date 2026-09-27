@@ -113,6 +113,13 @@ main { padding: 20px 24px; max-width: 2200px; margin: 0 auto; }
 .signin-msg { min-height: 18px; font-size: 12px; color: var(--ink-dim); }
 .signin-msg.err { color: var(--danger); }
 .signin-msg.ok { color: var(--accent-text); }
+.signin-link { margin-top: 10px; width: 100%; font-size: 12px; }
+.pw-form { display: flex; flex-direction: column; gap: 10px; max-width: 360px; margin-top: 12px; }
+.pw-banner {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin: 12px 24px 0; padding: 10px 14px; border-radius: 10px;
+  border: 1px solid var(--accent); background: var(--surface-2); font-size: 13px;
+}
 .user-chip { display: flex; align-items: center; gap: 8px; }
 
 /* Today: the follow-up sections tile across the width on desktop (a daily
@@ -956,6 +963,17 @@ function sendMagicLink(email) {
 }
 function signOutUser() { return supa.auth.signOut(); }
 
+/* Password sign-in for existing accounts: no email round-trip. New accounts are
+   still created only through the magic link above, because proving you own the
+   @stepo.ai inbox is the whole access control (the DB trigger only checks the
+   domain string), so the signup confirmation must stay on. */
+function signInWithPassword(email, password) {
+  return supa.auth.signInWithPassword({ email: email.trim().toLowerCase(), password });
+}
+function setPassword(password) {
+  return supa.auth.updateUser({ password, data: { has_password: true } });
+}
+
 /* Call a Supabase Edge Function with the signed-in user's session attached. */
 async function invokeFunction(name, body) {
   const { data, error } = await supa.functions.invoke(name, { body });
@@ -1097,32 +1115,45 @@ function createRemoteStore() {
 
 
 /* ===== js/auth-gate.js ===== */
-/* Magic-link sign-in screen (replaces the old passcode gate) and the signed-in
-   user chip. Access is restricted to @stepo.ai in the database; this UI just
-   collects the email and asks Supabase to send the link. */
+/* Sign-in screen and the signed-in user chip. Existing users sign in with
+   email + password; the emailed link is only for a first sign-in or a
+   forgotten password. Access is restricted to @stepo.ai in the database. */
 
 function buildSignIn() {
-  const email = el('input', { type: 'email', placeholder: 'you@stepo.ai', autocomplete: 'email', required: 'required' });
-  const btn = el('button', { class: 'btn btn-accent', type: 'submit', text: 'Send sign-in link' });
+  const email = el('input', { type: 'email', placeholder: 'you@stepo.ai', autocomplete: 'username', required: 'required' });
+  const password = el('input', { type: 'password', placeholder: 'Password', autocomplete: 'current-password' });
+  const btn = el('button', { class: 'btn btn-accent', type: 'submit', text: 'Sign in' });
   const msg = el('div', { class: 'signin-msg' });
+  const say = (cls, text) => { msg.className = 'signin-msg' + (cls ? ' ' + cls : ''); msg.textContent = text; };
 
-  const form = el('form', { class: 'signin-form' }, [email, btn, msg]);
+  const form = el('form', { class: 'signin-form' }, [email, password, btn, msg]);
   form.addEventListener('submit', async e => {
     e.preventDefault();
     const addr = email.value.trim();
     if (!addr) return;
+    if (!password.value) { say('err', 'Enter your password, or use the email link below.'); password.focus(); return; }
     btn.disabled = true;
-    msg.className = 'signin-msg';
-    msg.textContent = 'Sending…';
-    const { error } = await sendMagicLink(addr);
+    say('', 'Signing in…');
+    const { error } = await signInWithPassword(addr, password.value);
     btn.disabled = false;
     if (error) {
-      msg.className = 'signin-msg err';
-      msg.textContent = error.message;
-    } else {
-      msg.className = 'signin-msg ok';
-      msg.textContent = 'Check your email for a sign-in link.';
+      say('err', /invalid login/i.test(error.message)
+        ? 'Wrong email or password. No password yet? Use the email link below once, then set one in Settings.'
+        : error.message);
     }
+    // On success, onAuthChange in app.js swaps this screen for the app.
+  });
+
+  const linkBtn = el('button', { class: 'btn btn-ghost signin-link', type: 'button', text: 'First time or forgot your password? Email me a link' });
+  linkBtn.addEventListener('click', async () => {
+    const addr = email.value.trim();
+    if (!addr) { say('err', 'Enter your @stepo.ai email first.'); email.focus(); return; }
+    linkBtn.disabled = true;
+    say('', 'Sending…');
+    const { error } = await sendMagicLink(addr);
+    linkBtn.disabled = false;
+    if (error) say('err', error.message);
+    else say('ok', 'Check your email for a sign-in link, then set a password in Settings.');
   });
 
   return el('div', { class: 'signin', id: 'signin' }, [
@@ -1132,6 +1163,7 @@ function buildSignIn() {
       ]),
       el('div', { class: 'muted', text: 'Sign in with your @stepo.ai email.' }),
       form,
+      linkBtn,
     ]),
   ]);
 }
@@ -2975,6 +3007,33 @@ function renderDesigner(root, ctx) {
 
 /* ===== js/views/settings.js ===== */
 
+/* Set or change your sign-in password, so signing in never needs the email link. */
+function passwordSection() {
+  const pw = el('input', { type: 'password', placeholder: 'New password (8+ characters)', autocomplete: 'new-password' });
+  const pw2 = el('input', { type: 'password', placeholder: 'Repeat it', autocomplete: 'new-password' });
+  const msg = el('div', { class: 'signin-msg' });
+  const say = (cls, text) => { msg.className = 'signin-msg' + (cls ? ' ' + cls : ''); msg.textContent = text; };
+  const save = el('button', { class: 'btn btn-accent', type: 'submit', text: 'Save password' });
+  const form = el('form', { class: 'pw-form' }, [pw, pw2, save, msg]);
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (pw.value.length < 8) { say('err', 'Use at least 8 characters.'); return; }
+    if (pw.value !== pw2.value) { say('err', 'The two passwords don’t match.'); return; }
+    save.disabled = true;
+    say('', 'Saving…');
+    const { error } = await setPassword(pw.value);
+    save.disabled = false;
+    if (error) { say('err', error.message); return; }
+    pw.value = ''; pw2.value = '';
+    say('ok', 'Saved. From now on sign in with your email + this password, no email link.');
+  });
+  return el('section', { class: 'section' }, [
+    el('div', { class: 'section-head' }, [el('h2', { text: 'Sign-in password' })]),
+    el('div', { class: 'muted', text: 'Set a password once and you’ll skip the email link every time you sign in.' }),
+    form,
+  ]);
+}
+
 /* Settings tab. Appearance (light/dark) for now; a natural home for more
    preferences later. Re-renders itself on change since the route is unchanged. */
 function renderSettings(root, ctx) {
@@ -3005,6 +3064,7 @@ function drawSettings(root, ctx, draw) {
         choice('light', 'Light', 'White background, same accent.'),
       ]),
     ]),
+    passwordSection(),
   );
 }
 
@@ -3515,14 +3575,30 @@ function boot() {
   window.addEventListener('hashchange', render);
   store.subscribe(() => render());
 
+  // Nudge anyone still on email-link sign-in to set a password (Settings).
+  function paintPasswordBanner(session) {
+    const slot = document.getElementById('banner-slot');
+    if (!slot) return;
+    const old = slot.querySelector('.pw-banner');
+    if (old) old.remove();
+    if (!session || (session.user.user_metadata && session.user.user_metadata.has_password)) return;
+    slot.append(el('div', { class: 'pw-banner' }, [
+      el('span', { text: 'Set a password once and you’ll never need the email link to sign in again.' }),
+      el('button', { class: 'btn btn-accent', text: 'Set password', onClick: () => route('settings') }),
+    ]));
+  }
+
   async function showApp(session) {
     setSessionUser(session.user);
     mountUserChip(session, doSignOut);
+    paintPasswordBanner(session);
     signInEl.style.display = 'none';
-    if (session.user.id !== currentUid) {
-      currentUid = session.user.id;
-      await store.load();
-    }
+    // Only a new user triggers a load + full render. Same-user auth events
+    // (hourly token refresh, password change) must not re-render, or they
+    // wipe whatever is mid-typing on screen.
+    if (session.user.id === currentUid) return;
+    currentUid = session.user.id;
+    await store.load();
     if (!mounted) { mountQuickAdd(ctx); mountSearch(ctx); mountBrainDump(ctx); mounted = true; }
     render();
     updateAiCost();
@@ -3530,6 +3606,7 @@ function boot() {
 
   function showSignIn() {
     currentUid = null;
+    paintPasswordBanner(null);
     clearUserChip();
     clear(viewRoot);
     signInEl.style.display = 'grid';
