@@ -271,6 +271,26 @@ main[data-route="learnings"] > .section { margin-bottom: 0; }
 }
 .group-head:first-child { margin-top: 0; }
 
+/* Contacts tab: filters, copy bar, and the contact table. */
+.contacts-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+.contacts-controls input:not([type="checkbox"]) { flex: 1 1 260px; }
+.contacts-controls select { flex: 0 1 220px; }
+.inline-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; }
+.copy-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+.copy-msg { font-size: 13px; }
+.table-wrap { overflow-x: auto; }
+.contact-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.contact-table th {
+  text-align: left; font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+  color: var(--ink-dim); padding: 8px 10px; border-bottom: 1px solid var(--line);
+}
+.contact-table td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.contact-table tr:hover td { background: var(--surface-2); }
+.contact-table a { color: var(--accent-text); text-decoration: none; font-weight: 600; }
+.contact-table a:hover { text-decoration: underline; }
+.email-cell { display: inline-flex; align-items: center; gap: 8px; }
+.btn.btn-xs { padding: 2px 8px; font-size: 11px; }
+
 /* Shawmut commitment Q&A: answer boxes under each question. */
 .qa-note { margin-top: 8px; min-height: 48px; font-size: 13px; }
 
@@ -416,7 +436,6 @@ textarea { min-height: 80px; resize: vertical; }
   .stage-bar-label { width: 64px; font-size: 11px; }
   .stage-bar-val { width: 86px; font-size: 11px; }
   .attr-field select { min-width: 0; }
-  .designer-frame { height: calc(100vh - 96px); }
 }
 
 /* ── Dashboard (landing) ─────────────────────────────────────────────── */
@@ -465,10 +484,6 @@ textarea { min-height: 80px; resize: vertical; }
 .contact-edit { display: flex; flex-direction: column; gap: 6px; }
 .contact-edit > input { width: 100%; }
 
-/* Designer tab: StepoAI Studio embedded edge-to-edge below the top bar. */
-main[data-route="designer"] { padding: 0; max-width: none; }
-.designer-frame { display: block; width: 100%; height: calc(100vh - 59px); border: 0; }
-
 /* Onboarded contacts. */
 .chip.onboarded { background: var(--accent); color: var(--on-accent); }
 .onboard-check { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--ink-dim); }
@@ -490,10 +505,10 @@ main[data-route="designer"] { padding: 0; max-width: none; }
       <a href="#/pilot" data-route="pilot">Pilot</a>
       <a href="#/customers" data-route="customers">Customers</a>
       <a href="#/accounts" data-route="accounts">Accounts</a>
+      <a href="#/contacts" data-route="contacts">Contacts</a>
       <a href="#/learnings" data-route="learnings">Learnings</a>
       <a href="#/playbook" data-route="playbook">Playbook</a>
       <a href="#/shawmut" data-route="shawmut">Shawmut</a>
-      <a href="#/designer" data-route="designer">Designer</a>
       <a href="#/settings" data-route="settings">Settings</a>
     </nav>
     <div class="topbar-right">
@@ -2979,29 +2994,137 @@ function renderShawmut(root, ctx) {
 }
 
 
-/* ===== js/views/designer.js ===== */
+/* ===== js/views/contacts.js ===== */
 
-/* The Designer tab embeds StepoAI Studio in-place. It's the same origin as the
-   CRM (both under stepobrady.github.io), so the iframe loads without any
-   cross-origin/X-Frame-Options friction. The Studio keeps its own passcode. */
-const STUDIO_URL = 'https://stepobrady.github.io/stepo-studio/';
+/* Contacts tab: every contact in one list with a copy-everything workflow.
+   "Copy all" puts the filtered list on the clipboard as tab-separated rows
+   (pastes straight into Sheets/Excel as columns); "Copy emails" gives a
+   ready-to-paste To/BCC line. Filters live at module level so a realtime
+   re-render (a teammate's edit) doesn't wipe what you've typed. */
 
-function renderDesigner(root, ctx) {
-  const frame = el('iframe', {
-    class: 'designer-frame',
-    src: STUDIO_URL,
-    title: 'StepoAI Studio',
-    allow: 'clipboard-write; clipboard-read',
+const filters = { q: '', industry: 'all', includeDead: false };
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (_) { /* fall back below */ }
+  const ta = el('textarea', { style: 'position:fixed;opacity:0;top:0;left:0' });
+  ta.value = text;
+  document.body.append(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+  ta.remove();
+  return ok;
+}
+
+const cell = v => String(v || '').replace(/[\t\r\n]+/g, ' ').trim();
+
+function renderContacts(root, ctx) {
+  const accounts = new Map(ctx.store.list('accounts').map(a => [a.id, a]));
+  const all = ctx.store.list('contacts').map(c => ({ c, a: accounts.get(c.accountId) || null }));
+
+  const search = el('input', { placeholder: 'Search name, company, title or email…' });
+  search.value = filters.q;
+  const industry = el('select', {}, [
+    el('option', { value: 'all', text: 'All industries' }),
+    ...INDUSTRIES.map(i => el('option', { value: i.id, text: i.label })),
+  ]);
+  industry.value = filters.industry;
+  const dead = el('input', { type: 'checkbox' });
+  dead.checked = filters.includeDead;
+
+  const msg = el('span', { class: 'muted copy-msg' });
+  const copyAllBtn = el('button', { class: 'btn btn-accent' });
+  const copyEmailsBtn = el('button', { class: 'btn' });
+  const count = el('span', { class: 'count' });
+  const tbody = el('tbody');
+
+  function shown() {
+    const q = filters.q.trim().toLowerCase();
+    return all
+      .filter(({ a }) => filters.includeDead || !a || (a.status || 'active') !== 'dead')
+      .filter(({ a }) => filters.industry === 'all' || (a && a.industry === filters.industry))
+      .filter(({ c, a }) => !q || [c.name, c.title, c.email, a && a.name].some(v => (v || '').toLowerCase().includes(q)))
+      .sort((x, y) => ((x.a ? x.a.name : '~').localeCompare(y.a ? y.a.name : '~')) || (x.c.name || '').localeCompare(y.c.name || ''));
+  }
+
+  let flashTimer = null;
+  function flash(text) {
+    msg.textContent = text;
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => { msg.textContent = ''; }, 4000);
+  }
+
+  function draw() {
+    const rows = shown();
+    const withEmail = rows.filter(r => r.c.email);
+    count.textContent = String(rows.length);
+    copyAllBtn.textContent = `Copy all (${rows.length})`;
+    copyEmailsBtn.textContent = `Copy emails (${withEmail.length})`;
+    copyAllBtn.disabled = !rows.length;
+    copyEmailsBtn.disabled = !withEmail.length;
+
+    tbody.replaceChildren(...(rows.length ? rows.map(({ c, a }) => {
+      const li = safeHref(c.linkedin);
+      return el('tr', {}, [
+        el('td', {}, [
+          el('strong', { text: c.name || '—' }),
+          c.title ? el('div', { class: 'muted', text: c.title }) : null,
+        ]),
+        el('td', {}, [a
+          ? el('a', { href: '#/account/' + a.id, text: a.name })
+          : el('span', { class: 'muted', text: 'No account' })]),
+        el('td', {}, [c.email
+          ? el('span', { class: 'email-cell' }, [
+              el('span', { text: c.email }),
+              el('button', {
+                class: 'btn btn-ghost btn-xs', text: 'Copy', title: 'Copy this email',
+                onClick: async () => flash((await copyText(c.email)) ? `Copied ${c.email}` : 'Copy failed'),
+              }),
+            ])
+          : el('span', { class: 'muted', text: '—' })]),
+        el('td', { text: c.phone || '' }),
+        el('td', {}, [li ? el('a', { href: li, target: '_blank', rel: 'noopener', text: 'LinkedIn' }) : null]),
+      ]);
+    }) : [el('tr', {}, [el('td', { colspan: '5', class: 'empty', text: 'No contacts match.' })])]));
+  }
+
+  copyAllBtn.addEventListener('click', async () => {
+    const rows = shown();
+    const tsv = [['Name', 'Title', 'Company', 'Email', 'Phone', 'LinkedIn'].join('\t'),
+      ...rows.map(({ c, a }) => [c.name, c.title, a && a.name, c.email, c.phone, c.linkedin].map(cell).join('\t'))].join('\n');
+    flash((await copyText(tsv))
+      ? `Copied ${rows.length} contacts. Paste into Sheets or Excel.`
+      : 'Copy failed. Your browser blocked the clipboard.');
   });
-  // The Studio fits its preview to the available height on load + on resize.
-  // Inside this iframe that first fit runs before the frame has its real
-  // height and nothing re-fires, so the preview renders clipped. Same origin
-  // lets us poke the frame to re-fit once it has settled.
-  frame.addEventListener('load', () => {
-    const refit = () => { try { frame.contentWindow.dispatchEvent(new Event('resize')); } catch (_) { /* cross-origin guard */ } };
-    [50, 300, 800, 1600].forEach(ms => setTimeout(refit, ms));
+  copyEmailsBtn.addEventListener('click', async () => {
+    const rows = shown();
+    const emails = rows.map(r => r.c.email).filter(Boolean);
+    const missing = rows.length - emails.length;
+    flash((await copyText(emails.join('; ')))
+      ? `Copied ${emails.length} emails${missing ? ` (${missing} contact${missing === 1 ? ' has' : 's have'} no email)` : ''}.`
+      : 'Copy failed. Your browser blocked the clipboard.');
   });
-  root.append(frame);
+
+  search.addEventListener('input', () => { filters.q = search.value; draw(); });
+  industry.addEventListener('change', () => { filters.industry = industry.value; draw(); });
+  dead.addEventListener('change', () => { filters.includeDead = dead.checked; draw(); });
+
+  draw();
+
+  root.append(
+    el('div', { class: 'section-head' }, [el('h1', { text: 'Contacts' }), count]),
+    el('div', { class: 'contacts-controls' }, [
+      search, industry,
+      el('label', { class: 'muted inline-check' }, [dead, ' Include dead accounts']),
+    ]),
+    el('div', { class: 'copy-bar' }, [copyAllBtn, copyEmailsBtn, msg]),
+    el('div', { class: 'table-wrap' }, [
+      el('table', { class: 'contact-table' }, [
+        el('thead', {}, [el('tr', {}, ['Name', 'Company', 'Email', 'Phone', ''].map(h => el('th', { text: h })))]),
+        tbody,
+      ]),
+    ]),
+  );
 }
 
 
@@ -3522,10 +3645,10 @@ const ROUTES = {
   customers: renderCustomers,
   accounts: renderAccounts,
   account: renderAccountDetail,
+  contacts: renderContacts,
   learnings: renderLearnings,
   playbook: renderPlaybook,
   shawmut: renderShawmut,
-  designer: renderDesigner,
   settings: renderSettings,
 };
 
