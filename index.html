@@ -271,6 +271,20 @@ main[data-route="learnings"] > .section { margin-bottom: 0; }
 }
 .group-head:first-child { margin-top: 0; }
 
+/* Contact names linked to LinkedIn (dom.js personLink). */
+a.person-link { color: var(--accent-text); font-weight: 700; text-decoration: none; }
+a.person-link:hover { text-decoration: underline; }
+.li-badge {
+  display: inline-block; margin-left: 6px; padding: 0 4px; border-radius: 3px;
+  font-size: 10px; font-weight: 800; line-height: 15px; vertical-align: 1px;
+  background: var(--accent); color: var(--on-accent);
+}
+.person-name a.li-find {
+  margin-left: 8px; font-size: 11px; font-weight: 500; color: var(--ink-dim);
+  text-decoration: underline dotted;
+}
+.person-name a.li-find:hover { color: var(--accent-text); }
+
 /* Contacts tab: filters, copy bar, and the contact table. */
 .contacts-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
 .contacts-controls input:not([type="checkbox"]) { flex: 1 1 260px; }
@@ -922,6 +936,36 @@ function safeHref(url) {
   if (typeof url !== 'string') return null;
   const trimmed = url.trim();
   return /^(https?:|mailto:)/i.test(trimmed) ? trimmed : null;
+}
+
+/* LinkedIn URLs are often pasted without the scheme ("linkedin.com/in/x"). */
+function linkedinHref(url) {
+  if (typeof url !== 'string' || !url.trim()) return null;
+  const t = url.trim();
+  if (/^([a-z]+\.)?linkedin\.com\//i.test(t)) return 'https://' + t;
+  return safeHref(t);
+}
+
+/* A contact's name, linked to their saved LinkedIn profile. With no profile
+   saved, the name stays plain and a small "find" link searches LinkedIn for
+   name + company, so every person is one click away. */
+function personLink(contact, companyName) {
+  const name = contact.name || '—';
+  const stop = e => e.stopPropagation(); // rows that open drawers/pages stay put
+  const href = linkedinHref(contact.linkedin);
+  if (href) {
+    return el('a', {
+      class: 'person-link', href, target: '_blank', rel: 'noopener', title: 'Open LinkedIn profile', onClick: stop,
+    }, [name, el('span', { class: 'li-badge', text: 'in' })]);
+  }
+  const q = encodeURIComponent([contact.name, companyName].filter(Boolean).join(' '));
+  return el('span', { class: 'person-name' }, [
+    el('strong', { text: name }),
+    contact.name ? el('a', {
+      class: 'li-find', href: 'https://www.linkedin.com/search/results/people/?keywords=' + q,
+      target: '_blank', rel: 'noopener', title: 'Search LinkedIn for this person', text: 'find', onClick: stop,
+    }) : null,
+  ]);
 }
 
 function fmtMoney(n) {
@@ -1888,7 +1932,7 @@ function learningBlock(ctx, account) {
 
 /* One contact row that toggles between a display view and an inline editor,
    so contacts can be corrected in place (not just removed and re-added). */
-function contactRow(ctx, c, allInteractions) {
+function contactRow(ctx, c, allInteractions, companyName) {
   const row = el('div', { class: 'row' });
 
   const setOnboarded = (on) => {
@@ -1902,7 +1946,7 @@ function contactRow(ctx, c, allInteractions) {
     const st = contactEmailStatus(allInteractions, c.id);
     row.replaceChildren(
       el('div', { class: 'grow' }, [
-        el('strong', { text: c.name }),
+        personLink(c, companyName),
         el('div', { class: 'muted', text: [c.title, c.email, c.phone].filter(Boolean).join(' · ') || 'No details' }),
       ]),
       c.onboarded ? el('span', { class: 'chip onboarded', text: '✓ Onboarded' + (c.onboardedAt ? ' · ' + fmtDate(c.onboardedAt) : '') }) : null,
@@ -1923,6 +1967,7 @@ function contactRow(ctx, c, allInteractions) {
     const title = el('input', { value: c.title || '', placeholder: 'Title' });
     const email = el('input', { value: c.email || '', placeholder: 'Email' });
     const phone = el('input', { value: c.phone || '', placeholder: 'Phone' });
+    const linkedin = el('input', { value: c.linkedin || '', placeholder: 'LinkedIn profile URL' });
     const onboarded = el('input', { type: 'checkbox' });
     onboarded.checked = !!c.onboarded;
     const onboardedAt = el('input', { type: 'date', value: c.onboardedAt || '' });
@@ -1930,6 +1975,7 @@ function contactRow(ctx, c, allInteractions) {
       if (!name.value.trim()) return;
       const changes = {
         name: name.value.trim(), title: title.value.trim(), email: email.value.trim(), phone: phone.value.trim(),
+        linkedin: linkedinHref(linkedin.value) || linkedin.value.trim(),
         onboarded: onboarded.checked,
         onboardedAt: onboarded.checked ? (onboardedAt.value || c.onboardedAt || todayStr()) : null,
       };
@@ -1941,6 +1987,7 @@ function contactRow(ctx, c, allInteractions) {
       el('div', { class: 'grow contact-edit' }, [
         name,
         el('div', { class: 'field-row' }, [title, email, phone]),
+        linkedin,
         el('label', { class: 'onboard-check' }, [onboarded, el('span', { text: 'Onboarded' }), onboardedAt]),
       ]),
       el('button', { class: 'btn btn-accent', text: 'Save', onClick: saveEdit }),
@@ -1960,6 +2007,7 @@ function contactBlock(ctx, account) {
   const title = el('input', { placeholder: 'Title' });
   const email = el('input', { placeholder: 'Email' });
   const phone = el('input', { placeholder: 'Phone' });
+  const linkedin = el('input', { placeholder: 'LinkedIn URL' });
 
   const onboardedN = contacts.filter(c => c.onboarded).length;
   return el('section', { class: 'section' }, [
@@ -1969,10 +2017,10 @@ function contactBlock(ctx, account) {
       onboardedN ? el('span', { class: 'chip onboarded', text: `${onboardedN} onboarded` }) : null,
     ]),
     ...(contacts.length
-      ? contacts.map(c => contactRow(ctx, c, allInteractions))
+      ? contacts.map(c => contactRow(ctx, c, allInteractions, account.name))
       : [el('div', { class: 'empty', text: 'No contacts yet.' })]),
     el('div', { class: 'field-row', style: 'margin-top:8px' }, [
-      name, title, email, phone,
+      name, title, email, phone, linkedin,
       el('button', {
         class: 'btn', text: 'Add',
         onClick: () => {
@@ -1980,6 +2028,7 @@ function contactBlock(ctx, account) {
           ctx.store.add('contacts', {
             accountId: account.id, name: name.value.trim(),
             title: title.value.trim(), email: email.value.trim(), phone: phone.value.trim(),
+            linkedin: linkedinHref(linkedin.value) || linkedin.value.trim(),
           });
         },
       }),
@@ -3137,10 +3186,9 @@ function renderContacts(root, ctx) {
     copyEmailsBtn.disabled = !withEmail.length;
 
     tbody.replaceChildren(...(rows.length ? rows.map(({ c, a }) => {
-      const li = safeHref(c.linkedin);
       return el('tr', {}, [
         el('td', {}, [
-          el('strong', { text: c.name || '—' }),
+          personLink(c, a && a.name),
           c.title ? el('div', { class: 'muted', text: c.title }) : null,
         ]),
         el('td', {}, [a
@@ -3156,15 +3204,14 @@ function renderContacts(root, ctx) {
             ])
           : el('span', { class: 'muted', text: '—' })]),
         el('td', { text: c.phone || '' }),
-        el('td', {}, [li ? el('a', { href: li, target: '_blank', rel: 'noopener', text: 'LinkedIn' }) : null]),
       ]);
-    }) : [el('tr', {}, [el('td', { colspan: '5', class: 'empty', text: 'No contacts match.' })])]));
+    }) : [el('tr', {}, [el('td', { colspan: '4', class: 'empty', text: 'No contacts match.' })])]));
   }
 
   copyAllBtn.addEventListener('click', async () => {
     const rows = shown();
     const tsv = [['Name', 'Title', 'Company', 'Email', 'Phone', 'LinkedIn'].join('\t'),
-      ...rows.map(({ c, a }) => [c.name, c.title, a && a.name, c.email, c.phone, c.linkedin].map(cell).join('\t'))].join('\n');
+      ...rows.map(({ c, a }) => [c.name, c.title, a && a.name, c.email, c.phone, linkedinHref(c.linkedin) || c.linkedin].map(cell).join('\t'))].join('\n');
     flash((await copyText(tsv))
       ? `Copied ${rows.length} contacts. Paste into Sheets or Excel.`
       : 'Copy failed. Your browser blocked the clipboard.');
@@ -3193,7 +3240,7 @@ function renderContacts(root, ctx) {
     el('div', { class: 'copy-bar' }, [copyAllBtn, copyEmailsBtn, msg]),
     el('div', { class: 'table-wrap' }, [
       el('table', { class: 'contact-table' }, [
-        el('thead', {}, [el('tr', {}, ['Name', 'Company', 'Email', 'Phone', ''].map(h => el('th', { text: h })))]),
+        el('thead', {}, [el('tr', {}, ['Name', 'Company', 'Email', 'Phone'].map(h => el('th', { text: h })))]),
         tbody,
       ]),
     ]),
