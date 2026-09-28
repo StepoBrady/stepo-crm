@@ -396,6 +396,11 @@ input, select, textarea {
 }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent-text); }
 textarea { min-height: 80px; resize: vertical; }
+/* Inline stage picker on account deal rows: sized like a chip, not a form field. */
+select.stage-select {
+  width: auto; flex: 0 0 auto; padding: 3px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; cursor: pointer;
+}
 .field-row { display: flex; gap: 12px; }
 .field-row > * { flex: 1; }
 .actions { display: flex; gap: 8px; margin-top: 18px; }
@@ -1982,6 +1987,31 @@ function contactBlock(ctx, account) {
   ]);
 }
 
+/* Inline stage picker for a deal row: same stage vocabulary per track and the
+   same close bookkeeping as the board (close date stamp, lost reason). */
+function stagePicker(ctx, deal) {
+  const track = deal.track || 'pipeline';
+  if (track === 'backburner') return el('span', { class: 'chip', text: 'Back burner' });
+  const options = track === 'pilot' ? PILOT_STAGES : track === 'customer' ? CUSTOMER_STAGES : STAGES;
+  const sel = el('select', { class: 'stage-select', title: 'Change stage' }, options.map(s =>
+    el('option', { value: s.id, text: s.label, ...(s.id === deal.stage ? { selected: 'selected' } : {}) })));
+  sel.addEventListener('click', e => e.stopPropagation()); // don't open the deal drawer
+  sel.addEventListener('change', () => {
+    const changes = { stage: sel.value };
+    if (track === 'pipeline') {
+      const def = stageById(sel.value);
+      if (def && def.isClosed) {
+        if (!deal.closedAt) changes.closedAt = new Date().toISOString();
+        if (!def.isWon) changes.closedReason = prompt('Why was this lost?') || '';
+      } else {
+        changes.closedAt = null;
+      }
+    }
+    ctx.store.update('deals', deal.id, changes);
+  });
+  return sel;
+}
+
 function dealBlock(ctx, account) {
   const deals = ctx.store.list('deals').filter(d => d.accountId === account.id);
   const dealName = el('input', { placeholder: 'Deal name' });
@@ -1994,7 +2024,6 @@ function dealBlock(ctx, account) {
     ]),
     ...(deals.length
       ? deals.map(d => {
-          const stage = stageById(d.stage);
           return el('div', {
             class: 'row', onClick: () => openDealDrawer(ctx, d.id),
           }, [
@@ -2005,7 +2034,7 @@ function dealBlock(ctx, account) {
                 text: d.nextAction ? `Next: ${d.nextAction.text} (${fmtDate(d.nextAction.dueDate)})` : 'No next action',
               }),
             ]),
-            el('span', { class: 'chip', text: stage ? stage.label : d.stage }),
+            stagePicker(ctx, d),
             el('span', { class: 'chip', text: fmtMoney(d.value) }),
           ]);
         })
