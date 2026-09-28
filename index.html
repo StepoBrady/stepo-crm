@@ -330,6 +330,9 @@ main[data-route="learnings"] > .section { margin-bottom: 0; }
 .metric-value { font-size: 30px; color: var(--accent-text); }
 
 .board { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 12px; align-items: flex-start; }
+.board-search-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.board-search-row .board-search { flex: 0 1 420px; }
+.board-hits { font-size: 13px; white-space: nowrap; }
 .column {
   flex: 1 1 0; min-width: 150px; background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--radius); padding: 10px; min-height: 120px;
@@ -2291,6 +2294,19 @@ function onTrack(deal, track) {
   return (deal.track || 'pipeline') === track;
 }
 
+// Module-level so the search survives the full re-render that every store
+// change triggers (including your own drag-drops and teammates' edits).
+let pipelineQuery = '';
+let searchHadFocus = false;
+
+function matchesQuery(ctx, deal, q) {
+  if (!q) return true;
+  const account = ctx.store.get('accounts', deal.accountId);
+  const contact = deal.primaryContactId ? ctx.store.get('contacts', deal.primaryContactId) : null;
+  return [deal.name, account && account.name, contact && contact.name, deal.nextAction && deal.nextAction.text]
+    .some(v => (v || '').toLowerCase().includes(q));
+}
+
 /* Compact card for the back-burner strip: the person leads, with account and
    when they were last touched. Draggable so it can be pulled back onto the
    board (dropping it in a pipeline column reactivates the deal). */
@@ -2358,6 +2374,33 @@ function renderPipeline(root, ctx) {
   }
   const lastTouch = deal => lastByAcct.get(deal.accountId) || null;
 
+  // Search filters the board + back burner; the metrics above stay whole-pipeline.
+  const search = el('input', { type: 'search', class: 'board-search', placeholder: 'Search deals, accounts, contacts, next actions…' });
+  search.value = pipelineQuery;
+  const hits = el('span', { class: 'muted board-hits' });
+  const boardSlot = el('div');
+  const bbSlot = el('div');
+  function drawBoard() {
+    const q = pipelineQuery.trim().toLowerCase();
+    const shown = deals.filter(d => matchesQuery(ctx, d, q));
+    const shownBB = backBurner.filter(d => matchesQuery(ctx, d, q));
+    const n = shown.length + shownBB.length;
+    hits.textContent = q ? `${n} match${n === 1 ? '' : 'es'}` : '';
+    boardSlot.replaceChildren(el('div', { class: 'board' },
+      STAGES.map(stage => stageColumn(ctx, {
+        stage, today, track: 'pipeline',
+        deals: shown.filter(d => d.stage === stage.id),
+      }))));
+    bbSlot.replaceChildren(backBurnerStrip(ctx, shownBB, lastTouch));
+  }
+  search.addEventListener('input', () => { searchHadFocus = true; pipelineQuery = search.value; drawBoard(); });
+  search.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { search.value = ''; pipelineQuery = ''; drawBoard(); }
+  });
+  search.addEventListener('focus', () => { searchHadFocus = true; });
+  search.addEventListener('blur', () => { searchHadFocus = false; });
+  drawBoard();
+
   root.append(
     el('h1', { text: 'Pipeline' }),
     el('div', { class: 'metrics' }, [
@@ -2380,14 +2423,15 @@ function renderPipeline(root, ctx) {
         }),
       ]),
     ]),
-    el('div', { class: 'board' },
-      STAGES.map(stage =>
-        stageColumn(ctx, {
-          stage, today, track: 'pipeline',
-          deals: deals.filter(d => d.stage === stage.id),
-        }))),
-    backBurnerStrip(ctx, backBurner, lastTouch),
+    el('div', { class: 'board-search-row' }, [search, hits]),
+    boardSlot,
+    bbSlot,
   );
+  // A teammate's edit re-renders the view mid-typing; keep the cursor in the box.
+  if (searchHadFocus) {
+    search.focus();
+    search.setSelectionRange(search.value.length, search.value.length);
+  }
 }
 
 
